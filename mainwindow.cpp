@@ -12,37 +12,16 @@
 #include <fstream>
 #include <string>
 #include <sstream>
+#include <algorithm>
+#include <functional>
+
+#include <iostream> // DEBUG
 
 // PeersView is the tree widget which lists all the reachable peers
 class PeersView : public QTreeWidget
 {
 public:
   PeersView(QWidget*) {};
-};
-
-// PeersView is used to draw the online checks
-class PeersViewDelegate : public QItemDelegate
-{
-
-public:
-    inline PeersViewDelegate(MainWindow *mainWindow) : QItemDelegate(mainWindow) {}
-
-    void paint(QPainter *painter, const QStyleOptionViewItem &option,
-               const QModelIndex &index ) const Q_DECL_OVERRIDE
-    {
-        if (index.column() != 0) {
-            QItemDelegate::paint(painter, option, index);
-            return;
-        }
-        painter->setRenderHint(QPainter::Antialiasing);
-
-        QLinearGradient redGradient(0, 0, 10, 0);
-        redGradient.setColorAt(0, QColor(100, 0, 0));
-        redGradient.setColorAt(1, QColor(255, 0, 0));
-        painter->setBrush(QBrush(redGradient));
-        QRect rect = option.rect;
-        //painter->drawEllipse();
-    }
 };
 
 
@@ -104,17 +83,19 @@ MainWindow::MainWindow(QWidget *parent) :
 {
     ui->setupUi(this);
 
+    this->setWindowTitle("eKAshare");
+
     QHBoxLayout *hbox = new QHBoxLayout; // Main layout
 
     {
       QWidget *leftWidgets = new QWidget;
+      leftWidgets->setContentsMargins(-9, -9, -9, -9); // Remove widget border (usually 11px)
       QSizePolicy spLeft(QSizePolicy::Preferred, QSizePolicy::Preferred);
       spLeft.setHorizontalStretch(3);
       leftWidgets->setSizePolicy(spLeft);
 
       QVBoxLayout *vbox = new QVBoxLayout;
       leftWidgets->setLayout(vbox);
-
 
       QGroupBox *sentGB = new QGroupBox("Files inviati");
       {
@@ -193,6 +174,7 @@ MainWindow::MainWindow(QWidget *parent) :
     // Continue initialization
 
     initializePeers();
+    initializeServer();
 }
 
 MainWindow::~MainWindow()
@@ -201,20 +183,71 @@ MainWindow::~MainWindow()
 }
 
 void MainWindow::initializePeers() {
-  auto peers = readPeersList();
+  // Load peers from configuration files
+  readPeersList();
 
-  for(int i = 0; i < peers.size(); i += 2) {
-    QString addr = peers[i];
-    QString hostname = peers[i + 1];
+  size_t index = 0;
+  for(auto& tuple : m_peers) {
+    QString ip, hostname; int port;
+    std::tie(ip, port, hostname) = tuple; // Unpack peer data
 
     QTreeWidgetItem *item = new QTreeWidgetItem(m_peersView);
-    item->setIcon(0, QIcon(":res/red_light.png"));
     item->setText(1, hostname);
     item->setTextAlignment(1, Qt::AlignLeft);
+    item->setIcon(0, QIcon(":res/red_light.png"));
+
+    // Create client socket and link the signals
+    m_peersClientSockets.emplace_back(std::make_unique<QTcpSocket>());
+    connect(m_peersClientSockets.back().get(), SIGNAL(connected()), this, SLOT(socketConnected()));
+    connect(m_peersClientSockets.back().get(), SIGNAL(error(QAbstractSocket::SocketError)),
+            this, SLOT(socketError(QAbstractSocket::SocketError)));
+
+    m_peersClientSockets.back()->setProperty("peer_index", index);
+
+    // Add this peer to the list of authorized and registered ones
+    m_registeredPeers.insert(ip);
+
+    ++index;
+  }
+
+  // Ping all peers asynchronously
+  pingAllPeers();
+}
+
+void MainWindow::initializeServer() {
+  if (!m_tcpServer.listen(QHostAddress::LocalHost, m_localPort)) {
+    QMessageBox::critical(this, tr("Server"),
+                          tr("Errore durante l'inizializzazione del server: '%1'\n\nL'applicazione sara' chiusa.")
+                          .arg(m_tcpServer.errorString()));
+    exit(-1); // Cannot recover
+  }
+
+  connect(&m_tcpServer, SIGNAL(newConnection()), this, SLOT(acceptConnection()));
+
+  qDebug() << "[initializeServer] Server now listening on port " << m_localPort;
+}
+
+namespace {
+  inline std::string& ltrim(std::string &s) {
+      s.erase(s.begin(), std::find_if(s.begin(), s.end(),
+              std::not1(std::ptr_fun<int, int>(isspace))));
+      return s;
+  }
+
+  // trim from end
+  inline std::string& rtrim(std::string &s) {
+      s.erase(std::find_if(s.rbegin(), s.rend(),
+              std::not1(std::ptr_fun<int, int>(isspace))).base(), s.end());
+      return s;
+  }
+
+  // trim from both ends
+  inline std::string& trim(std::string &s) {
+      return ltrim(rtrim(s));
   }
 }
 
-QStringList MainWindow::readPeersList() {
+void MainWindow::readPeersList() {
   using namespace std;
   ifstream file("peers.cfg");
   if (!file) {
@@ -223,7 +256,7 @@ QStringList MainWindow::readPeersList() {
     msgBox.setText("File di configurazione 'peers.cfg' mancante nella directory\n\n '" + QDir::currentPath() + "'\n\n"
                    "L'applicazione sara' in grado di ricevere files ma non di inviarne.");
     msgBox.exec();
-    return QStringList();
+    return;
   }
   QStringList list;
   string line;
@@ -234,16 +267,123 @@ QStringList MainWindow::readPeersList() {
     while(isspace(line[i])) ++i;
     if (line[i] == '#')
       continue;
-    string addr, hostname;
+
     stringstream ss(line);
-    ss >> addr;
-    getline(ss, hostname); // All the rest
-    list.append(QString::fromStdString(addr));
-    list.append(QString::fromStdString(hostname));
+    string property;
+    ss >> property;
+    ss >> string(); // Eat '='
+
+    if (property.compare("localport") == 0) {
+      ss >> m_localPort;
+    } else if (property.compare("peer") == 0) {
+      string addr;
+      int port = 66; // Default
+      ss >> addr;
+      auto s = addr.find('/');
+      if (s != addr.npos) {
+        port = stoi(addr.substr(s + 1));
+        addr.resize(s);
+      }
+      string hostname;
+      getline(ss, hostname); // All the rest
+      hostname = trim(hostname);
+
+      m_peers.emplace_back(QString::fromStdString(addr), port, QString::fromStdString(hostname));
+    }
   }
   file.close();
-  return list;
 }
+
+void MainWindow::pingAllPeers() {
+  size_t index = 0;
+  for(auto& tuple : m_peers) {
+    // Try to connect to all peers for a ping
+
+    QString ip, hostname; int port;
+    std::tie(ip, port, hostname) = tuple; // Unpack peer data
+
+    QTcpSocket& socket = *m_peersClientSockets[index];
+    socket.setProperty("command", SocketState::CONTACTED_HOST_FOR_PING);
+    socket.connectToHost(ip, port);
+
+    qDebug() << "[pingAllPeers] Trying to ping peer " << hostname;
+
+    ++index;
+  }
+}
+
+void MainWindow::socketConnected() // SLOT
+{
+  // Get the sender socket on this endpoint
+  QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
+
+  // Get the operation the socket requested and the endpoint it communicated with
+  auto state = *static_cast<SocketState*>(socket->property("command").data());
+  const int peerIndex = socket->property("peer_index").toInt();
+  auto& peer = m_peers[peerIndex];
+
+  qDebug() << "[socketConnected] SUCCESS! Peer " << std::get<2>(peer) << " is alive!";
+
+  switch(state) {
+    case CONTACTED_HOST_FOR_PING: {
+      auto item = m_peersView->topLevelItem(peerIndex);
+      item->setIcon(0, QIcon(":res/green_light.png"));
+    } break;
+  }
+}
+
+void MainWindow::socketError(QAbstractSocket::SocketError) // SLOT
+{
+  // Get the sender socket on this endpoint
+  QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
+
+  // Get the operation the socket requested and the endpoint it communicated with
+  auto state = *static_cast<SocketState*>(socket->property("command").data());
+  const int peerIndex = socket->property("peer_index").toInt();
+  auto& peer = m_peers[peerIndex];
+
+  qDebug() << "[socketError] FAILURE! Peer " << std::get<2>(peer) << " is NOT alive";
+
+  switch(state) {
+    case CONTACTED_HOST_FOR_PING: {
+      int peerIndex = socket->property("peer_index").toInt();
+      auto item = m_peersView->topLevelItem(peerIndex);
+      item->setIcon(0, QIcon(":res/red_light.png"));
+    } break;
+  }
+
+}
+
+void MainWindow::acceptConnection() // SLOT
+{
+  m_tcpServerConnection = m_tcpServer.nextPendingConnection();
+  QString addr = m_tcpServerConnection->peerAddress().toString();
+  int port = m_tcpServerConnection->peerPort();
+
+  // Check that this is a registered peer, otherwise refuse the connection
+  {
+    auto it = m_registeredPeers.find(addr);
+    if (it == m_registeredPeers.end()) {
+      // Not registered/authorized
+      m_tcpServerConnection->abort();
+      return;
+    }
+  }
+//  connect(m_tcpServerConnection, SIGNAL(readyRead()),
+//          this, SLOT(updateServerProgress()));
+//  connect(m_tcpServerConnection, SIGNAL(error(QAbstractSocket::SocketError)),
+//          this, SLOT(displayError(QAbstractSocket::SocketError)));
+
+//  serverStatusLabel->setText(tr("Accepted connection"));
+  m_tcpServer.close();
+  qDebug() << "[acceptConnection] Accepted connection from " << addr << "/" << port;
+}
+
+//bool MainWindow::isPeerAlive(QString ip, int port) {
+//  m_tcpClient.connectToHost(ip, port);
+//  m_tcpClient.setProperty()
+//  return true;
+//}
 
 //// Returns the job at a given row
 //const TransferClient *MainWindow::jobForRow(int row) const
