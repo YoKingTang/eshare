@@ -1,0 +1,6 @@
+<RCC>
+    <qresource prefix="/">
+        <file>res/green_light.png</file>
+        <file>res/red_light.png</file>
+    </qresource>
+</RCC>

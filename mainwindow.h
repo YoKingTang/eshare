@@ -24,6 +24,9 @@ private:
     TransfersView *m_receivedView;
     PeersView *m_peersView;
 
+    void initializePeers();
+    QStringList readPeersList();
+
     struct Job {
         //TorrentClient *client;
         QString torrentFileName;
