@@ -6,6 +6,7 @@
 namespace Ui {
 class MainWindow;
 }
+class TransfersView;
 
 class MainWindow : public QMainWindow
 {
@@ -17,6 +18,16 @@ public:
 
 private:
     Ui::MainWindow *ui;
+
+    TransfersView *m_sentView;
+    TransfersView *m_receivedView;
+
+    struct Job {
+        //TorrentClient *client;
+        QString torrentFileName;
+        QString destinationDirectory;
+    };
+    QList<Job> jobs;
 };
 
 #endif // MAINWINDOW_H
