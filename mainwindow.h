@@ -6,6 +6,7 @@
 namespace Ui {
 class MainWindow;
 }
+class PeersView;
 class TransfersView;
 
 class MainWindow : public QMainWindow
@@ -21,6 +22,7 @@ private:
 
     TransfersView *m_sentView;
     TransfersView *m_receivedView;
+    PeersView *m_peersView;
 
     struct Job {
         //TorrentClient *client;

@@ -2,6 +2,16 @@
 #include "ui_mainwindow.h"
 #include <QTreeWidget>
 #include <QItemDelegate>
+#include <QGroupBox>
+#include <QHBoxLayout>
+#include <QVBoxLayout>
+
+// PeersView is the tree widget which lists all the reachable peers
+class PeersView : public QTreeWidget
+{
+public:
+  PeersView(QWidget*) {};
+};
 
 // TransfersView is the tree widget which lists all of the ongoing file transfers
 class TransfersView : public QTreeWidget
@@ -61,43 +71,86 @@ MainWindow::MainWindow(QWidget *parent) :
 {
     ui->setupUi(this);
 
-    {
-        m_sentView = new TransfersView(this);
-
-        QStringList headers;
-        headers << tr("Progresso") << tr("Destinatario") << tr("File");
-
-        // Main torrent list
-        m_sentView->setItemDelegate(new TransfersViewDelegate(this));
-        m_sentView->setHeaderLabels(headers);
-        m_sentView->setSelectionBehavior(QAbstractItemView::SelectRows);
-        m_sentView->setAlternatingRowColors(true);
-        m_sentView->setRootIsDecorated(false);
-
-        QVBoxLayout *vbox = new QVBoxLayout;
-        vbox->addWidget(m_sentView);
-
-        ui->groupBox_sentFiles->setLayout(vbox);
-    }
+    QHBoxLayout *hbox = new QHBoxLayout; // Main layout
 
     {
-        m_receivedView = new TransfersView(this);
+      QWidget *leftWidgets = new QWidget;
+      QSizePolicy spLeft(QSizePolicy::Preferred, QSizePolicy::Preferred);
+      spLeft.setHorizontalStretch(3);
+      leftWidgets->setSizePolicy(spLeft);
 
-        QStringList headers;
-        headers << tr("Progresso") << tr("Mittente") << tr("File");
+      QVBoxLayout *vbox = new QVBoxLayout;
+      leftWidgets->setLayout(vbox);
 
-        // Main torrent list
-        m_receivedView->setItemDelegate(new TransfersViewDelegate(this));
-        m_receivedView->setHeaderLabels(headers);
-        m_receivedView->setSelectionBehavior(QAbstractItemView::SelectRows);
-        m_receivedView->setAlternatingRowColors(true);
-        m_receivedView->setRootIsDecorated(false);
+
+      QGroupBox *sentGB = new QGroupBox("Files inviati");
+      {
+          m_sentView = new TransfersView(this);
+
+          QStringList headers;
+          headers << tr("Progresso") << tr("Destinatario") << tr("File");
+
+          // Main transfers list
+          m_sentView->setItemDelegate(new TransfersViewDelegate(this));
+          m_sentView->setHeaderLabels(headers);
+          m_sentView->setSelectionBehavior(QAbstractItemView::SelectRows);
+          m_sentView->setAlternatingRowColors(true);
+          m_sentView->setRootIsDecorated(false);
+
+          QVBoxLayout *vbox = new QVBoxLayout;
+          vbox->addWidget(m_sentView);
+
+          sentGB->setLayout(vbox);
+      }
+
+      QGroupBox *receivedGB = new QGroupBox("Files ricevuti");
+      {
+          m_receivedView = new TransfersView(this);
+
+          QStringList headers;
+          headers << tr("Progresso") << tr("Mittente") << tr("File");
+
+          // Main transfers list
+          m_receivedView->setItemDelegate(new TransfersViewDelegate(this));
+          m_receivedView->setHeaderLabels(headers);
+          m_receivedView->setSelectionBehavior(QAbstractItemView::SelectRows);
+          m_receivedView->setAlternatingRowColors(true);
+          m_receivedView->setRootIsDecorated(false);
+
+          QVBoxLayout *vbox = new QVBoxLayout;
+          vbox->addWidget(m_receivedView);
+
+          receivedGB->setLayout(vbox);
+      }
+
+      vbox->addWidget(sentGB);
+      vbox->addWidget(receivedGB);
+
+      hbox->addWidget(leftWidgets);
+
+      QGroupBox *onlineGB = new QGroupBox("Peers");
+      QSizePolicy spRight(QSizePolicy::Preferred, QSizePolicy::Preferred);
+      spRight.setHorizontalStretch(1);
+      onlineGB->setSizePolicy(spRight);
+      {
+        m_peersView = new PeersView(this);
+
+        //m_peersView->setItemDelegate(new TransfersViewDelegate(this));
+        m_peersView->header()->close();
+        m_peersView->setSelectionBehavior(QAbstractItemView::SelectRows);
+        m_peersView->setAlternatingRowColors(true);
+        m_peersView->setRootIsDecorated(false);
 
         QVBoxLayout *vbox = new QVBoxLayout;
-        vbox->addWidget(m_receivedView);
+        vbox->addWidget(m_peersView);
 
-        ui->groupBox_receivedFiles->setLayout(vbox);
+        onlineGB->setLayout(vbox);
+      }
+
+      hbox->addWidget(onlineGB);
     }
+
+    ui->centralWidget->setLayout(hbox);
 }
 
 MainWindow::~MainWindow()
