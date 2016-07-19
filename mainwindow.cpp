@@ -179,6 +179,7 @@ MainWindow::MainWindow(QWidget *parent) :
 
 MainWindow::~MainWindow()
 {
+    m_peersPingTimer->stop();
     delete ui;
 }
 
@@ -199,6 +200,7 @@ void MainWindow::initializePeers() {
     // Create client socket and link the signals
     m_peersClientSockets.emplace_back(std::make_unique<QTcpSocket>());
     connect(m_peersClientSockets.back().get(), SIGNAL(connected()), this, SLOT(socketConnected()));
+    connect(m_peersClientSockets.back().get(), SIGNAL(readyRead()), this, SLOT(updateClientProgress()));
     connect(m_peersClientSockets.back().get(), SIGNAL(error(QAbstractSocket::SocketError)),
             this, SLOT(socketError(QAbstractSocket::SocketError)));
 
@@ -210,8 +212,10 @@ void MainWindow::initializePeers() {
     ++index;
   }
 
-  // Ping all peers asynchronously
-  pingAllPeers();
+  // Ping all peers asynchronously at regular intervals while this window is on
+  m_peersPingTimer = std::make_unique<QTimer>(this);
+  connect(m_peersPingTimer.get(), SIGNAL(timeout()), this, SLOT(pingAllPeers()));
+  m_peersPingTimer->start(5000);
 }
 
 void MainWindow::initializeServer() {
@@ -294,7 +298,10 @@ void MainWindow::readPeersList() {
   file.close();
 }
 
-void MainWindow::pingAllPeers() {
+void MainWindow::pingAllPeers() { // SLOT
+
+  qDebug() << "[TIMER ELAPSED - pingAllPeers] Trying to ping all peers";
+
   size_t index = 0;
   for(auto& tuple : m_peers) {
     // Try to connect to all peers for a ping
@@ -303,10 +310,9 @@ void MainWindow::pingAllPeers() {
     std::tie(ip, port, hostname) = tuple; // Unpack peer data
 
     QTcpSocket& socket = *m_peersClientSockets[index];
-    socket.setProperty("command", SocketState::CONTACTED_HOST_FOR_PING);
-    socket.connectToHost(ip, port);
 
-    qDebug() << "[pingAllPeers] Trying to ping peer " << hostname;
+    socket.setProperty("command", ClientSocketState::CONTACTED_HOST_FOR_PING);
+    socket.connectToHost(ip, port);
 
     ++index;
   }
@@ -318,7 +324,7 @@ void MainWindow::socketConnected() // SLOT
   QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
 
   // Get the operation the socket requested and the endpoint it communicated with
-  auto state = *static_cast<SocketState*>(socket->property("command").data());
+  auto state = *static_cast<ClientSocketState*>(socket->property("command").data());
   const int peerIndex = socket->property("peer_index").toInt();
   auto& peer = m_peers[peerIndex];
 
@@ -326,8 +332,34 @@ void MainWindow::socketConnected() // SLOT
 
   switch(state) {
     case CONTACTED_HOST_FOR_PING: {
-      auto item = m_peersView->topLevelItem(peerIndex);
-      item->setIcon(0, QIcon(":res/green_light.png"));
+      socket->setProperty("command", ClientSocketState::WAITING_FOR_PONG);
+      socket->write("PING?");
+    } break;
+  }
+}
+
+void MainWindow::updateClientProgress() // SLOT
+{
+  // Get the sender socket on this endpoint
+  QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
+
+  // Get the operation the socket requested and the endpoint it communicated with
+  auto state = *static_cast<ClientSocketState*>(socket->property("command").data());
+  const int peerIndex = socket->property("peer_index").toInt();
+  auto& peer = m_peers[peerIndex];
+
+
+  switch(state) {
+    case WAITING_FOR_PONG: {
+      QByteArray data = socket->readAll();
+      QString command = QString(data);
+      if(command.compare("PONG!") == 0) {
+        // Ping finished
+        socket->close();
+        auto item = m_peersView->topLevelItem(peerIndex);
+        item->setIcon(0, QIcon(":res/green_light.png"));
+        qDebug() << "[updateClientProgress] Peer " << std::get<2>(peer) << " is alive 'n kicking";
+      }
     } break;
   }
 }
@@ -338,17 +370,16 @@ void MainWindow::socketError(QAbstractSocket::SocketError) // SLOT
   QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
 
   // Get the operation the socket requested and the endpoint it communicated with
-  auto state = *static_cast<SocketState*>(socket->property("command").data());
+  auto state = *static_cast<ClientSocketState*>(socket->property("command").data());
   const int peerIndex = socket->property("peer_index").toInt();
   auto& peer = m_peers[peerIndex];
-
-  qDebug() << "[socketError] FAILURE! Peer " << std::get<2>(peer) << " is NOT alive";
 
   switch(state) {
     case CONTACTED_HOST_FOR_PING: {
       int peerIndex = socket->property("peer_index").toInt();
       auto item = m_peersView->topLevelItem(peerIndex);
       item->setIcon(0, QIcon(":res/red_light.png"));
+      qDebug() << "[socketError] Peer " << std::get<2>(peer) << " is NOT alive";
     } break;
   }
 
@@ -356,27 +387,69 @@ void MainWindow::socketError(QAbstractSocket::SocketError) // SLOT
 
 void MainWindow::acceptConnection() // SLOT
 {
-  m_tcpServerConnection = m_tcpServer.nextPendingConnection();
-  QString addr = m_tcpServerConnection->peerAddress().toString();
-  int port = m_tcpServerConnection->peerPort();
+  auto newSocketConnection = m_tcpServer.nextPendingConnection();
+  newSocketConnection->setProperty("command", ServerSocketState::IDLE);
+  m_tcpServerConnections.insert(newSocketConnection);
+
+  QString addr = newSocketConnection->peerAddress().toString();
+  int port = newSocketConnection->peerPort();
 
   // Check that this is a registered peer, otherwise refuse the connection
   {
     auto it = m_registeredPeers.find(addr);
     if (it == m_registeredPeers.end()) {
       // Not registered/authorized
-      m_tcpServerConnection->abort();
+      newSocketConnection->abort();
+      m_tcpServerConnections.remove(newSocketConnection);
       return;
     }
   }
-//  connect(m_tcpServerConnection, SIGNAL(readyRead()),
-//          this, SLOT(updateServerProgress()));
-//  connect(m_tcpServerConnection, SIGNAL(error(QAbstractSocket::SocketError)),
-//          this, SLOT(displayError(QAbstractSocket::SocketError)));
+
+  // Process the connection
+  connect(newSocketConnection, SIGNAL(readyRead()),
+          this, SLOT(updateServerProgress()));
+  connect(newSocketConnection, SIGNAL(error(QAbstractSocket::SocketError)),
+          this, SLOT(serverSocketError(QAbstractSocket::SocketError)));
 
 //  serverStatusLabel->setText(tr("Accepted connection"));
-  m_tcpServer.close();
+
   qDebug() << "[acceptConnection] Accepted connection from " << addr << "/" << port;
+}
+
+void MainWindow::updateServerProgress() // SLOT
+{
+  // Get the sender socket on this endpoint
+  QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
+  // Get our client socket state
+  auto state = *static_cast<ServerSocketState*>(socket->property("command").data());
+
+  // int bytesReceived = (int)socket->bytesAvailable();
+  QByteArray data = socket->readAll();
+
+  // Interpret client request
+  switch(state) {
+    case IDLE: {
+      // Interpret this bulk data as a command
+      QString command = QString(data);
+      if(command.compare("PING?") == 0) {
+        // Answer with "PONG!" and close
+        socket->write("PONG!");
+        socket->close();
+        m_tcpServerConnections.remove(socket);
+      }
+    }
+  }
+
+
+}
+
+void MainWindow::serverSocketError(QAbstractSocket::SocketError) // SLOT
+{
+  // Get the sender socket on this endpoint
+  QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
+  qDebug() << "[ERROR - serverSocketError] Unexpected error while communicating with client";
+  socket->abort();
+  m_tcpServerConnections.remove(socket);
 }
 
 //bool MainWindow::isPeerAlive(QString ip, int port) {
