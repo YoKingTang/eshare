@@ -2,5 +2,7 @@
     <qresource prefix="/">
         <file>res/green_light.png</file>
         <file>res/red_light.png</file>
+        <file>res/cancel_mark.png</file>
+        <file>res/check_mark.png</file>
     </qresource>
 </RCC>
