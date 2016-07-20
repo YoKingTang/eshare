@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 #include "pickreceiver.h"
+#include "dynamictreewidgetitem.h"
 #include <QTreeWidget>
 #include <QItemDelegate>
 #include <QGroupBox>
@@ -20,13 +21,34 @@
 
 #include <iostream> // DEBUG
 
-// PeersView is the tree widget which lists all the reachable peers
-class PeersView : public QTreeWidget
-{
-public:
-  PeersView(QWidget*) {};
-};
 
+//QString addr, hostname; int port;
+//std::tie(addr, port, hostname) = transfer.getPeer();
+//item->setText(1, hostname); // Receiver
+//QString localFile = transfer.getClientSourceFilePath();
+//if (localFile.isEmpty())
+//  localFile = "[N/A]"; // Should never happen
+//item->setText(2, localFile); // Source file (local file that we're sending)
+
+//void socketFailure();
+//void timeout();
+//void transferDenied();
+//void fileLocked();
+//void fileSentPercentage(int);
+
+//void receivingComplete();
+//void fileReceivedPercentage(int);
+
+//QString addr, hostname; int port;
+//std::tie(addr, port, hostname) = transfer.getPeer();
+//item->setText(1, hostname); // Sender
+//QString destinationFile = transfer.getServerDestinationFilePath();
+//if (destinationFile.isEmpty())
+//  destinationFile = "[N/A]";
+//item->setText(2, destinationFile); // Destination (local file written)
+
+//item->setFlags(item->flags() & ~Qt::ItemIsEditable);
+//item->setTextAlignment(1, Qt::AlignHCenter);
 
 // TransfersView is the tree widget which lists all of the ongoing file transfers
 class TransfersView : public QTreeWidget
@@ -41,7 +63,10 @@ class TransfersViewDelegate : public QItemDelegate
 {
 
 public:
-    inline TransfersViewDelegate(MainWindow *mainWindow) : QItemDelegate(mainWindow) {}
+    inline TransfersViewDelegate(MainWindow *mainWindow, bool sentView = true) :
+      m_sentView(sentView),
+      m_mainWindow(mainWindow),
+      QItemDelegate(mainWindow) {}
 
     void paint(QPainter *painter, const QStyleOptionViewItem &option,
                const QModelIndex &index ) const Q_DECL_OVERRIDE
@@ -64,13 +89,17 @@ public:
         progressBarOption.textVisible = true;
 
         // Set the progress and text values of the style option
-        int progress = 23; //qobject_cast<MainWindow *>(parent())->jobForRow(index.row())->progress();
+        //int progress = m_mainWindow->getPercentageForViewItem (m_sentView, index.row());
+        int progress = index.model()->data(index, Qt::UserRole /* Progressbar value */).toInt();
         progressBarOption.progress = progress < 0 ? 0 : progress;
         progressBarOption.text = QString::asprintf("%d%%", progressBarOption.progress);
 
         // Draw the progress bar onto the view
         QApplication::style()->drawControl(QStyle::CE_ProgressBar, &progressBarOption, painter);
     }
+private:
+    bool m_sentView = true;
+    MainWindow *m_mainWindow = nullptr;
 };
 
 const char MainWindow::PING[] = "PING?";
@@ -122,7 +151,7 @@ MainWindow::MainWindow(QWidget *parent) :
           m_receivedView = new TransfersView(this);
 
           QStringList headers;
-          headers << tr("Progresso") << tr("Mittente") << tr("File");
+          headers << tr("Progresso") << tr("Mittente") << tr("Destinazione");
 
           // Main transfers list
           m_receivedView->setItemDelegate(new TransfersViewDelegate(this));
@@ -147,7 +176,7 @@ MainWindow::MainWindow(QWidget *parent) :
       spRight.setHorizontalStretch(1);
       onlineGB->setSizePolicy(spRight);
       {
-        m_peersView = new PeersView(this);
+        m_peersView = new QTreeWidget(this);
 
         QStringList headers;
         headers << tr("") << tr("");
@@ -510,9 +539,12 @@ void MainWindow::updateServerProgress() // SLOT
           socket->disconnect();
 
           size_t peerIndex = socket->property("peer_index").toULongLong();
-          m_transfers.emplace_back(std::make_unique<PeerFileTransfer>(m_peers[peerIndex], socket, m_defaultDownloadPath)); // Server version
+          m_transfers.emplace_back(std::make_unique<PeerFileTransfer>(this, peerIndex, m_peers[peerIndex],
+                                                                      socket, m_defaultDownloadPath)); // Server version
 
-          m_transfers.back()->start();
+          addTransferToAppropriateView(*m_transfers.back());
+
+          m_transfers.back()->start(); // Start the transfer
 
         } else {
           qDebug() << "[SERVER] Denying transfer request - sending NACK_SEND_PERMISSION";
@@ -621,7 +653,56 @@ void MainWindow::processSendFiles(const QStringList files) {
   // >> Initiate transfer with peer <<
 
   for(auto& file : files) {
-    m_transfers.emplace_back(std::make_unique<PeerFileTransfer>(m_peers[index], file)); // Client version
-    m_transfers.back()->start();
+    m_transfers.emplace_back(std::make_unique<PeerFileTransfer>(this, index, m_peers[index], file)); // Client version
+
+    addTransferToAppropriateView(*m_transfers.back());
+
+    m_transfers.back()->start(); // Start the transfer
+  }
+}
+
+void MainWindow::addTransferToAppropriateView(PeerFileTransfer& transfer) {
+  // Add the transfer to the appropriate view (incoming or outgoing)
+  if (transfer.getType() == SERVER) {
+
+    // This endpoint is receiving a file
+
+    DynamicTreeWidgetItem *item = new DynamicTreeWidgetItem(transfer, m_receivedView);
+
+    // item->setText(0, "0"); // Progress styled by delegate
+    QString addr, hostname; int port;
+    std::tie(addr, port, hostname) = transfer.getPeer();
+    item->setText(1, hostname); // Sender
+    QString destinationFile = transfer.getServerDestinationFilePath();
+    if (destinationFile.isEmpty())
+      destinationFile = "[N/A]";
+    item->setText(2, destinationFile); // Destination (local file written)
+
+    item->setFlags(item->flags() & ~Qt::ItemIsEditable);
+    item->setTextAlignment(1, Qt::AlignHCenter);
+
+    // Link update signals and slots
+    connect(&transfer, SIGNAL(fileReceivedPercentage(int)), item, SLOT(filePercentage(int)));
+
+  } else {
+
+    // This endpoint is sending a file
+
+    DynamicTreeWidgetItem *item = new DynamicTreeWidgetItem(transfer, m_sentView);
+
+    // item->setText(0, "0"); // Progress styled by delegate
+    QString addr, hostname; int port;
+    std::tie(addr, port, hostname) = transfer.getPeer();
+    item->setText(1, hostname); // Receiver
+    QString localFile = transfer.getClientSourceFilePath();
+    if (localFile.isEmpty())
+      localFile = "[N/A]"; // Should never happen
+    item->setText(2, localFile); // Source file (local file that we're sending)
+
+    item->setFlags(item->flags() & ~Qt::ItemIsEditable);
+    item->setTextAlignment(1, Qt::AlignHCenter);
+
+    // Link update signals and slots
+    connect(&transfer, SIGNAL(fileSentPercentage(int)), item, SLOT(filePercentage(int)));
   }
 }

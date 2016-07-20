@@ -14,12 +14,14 @@ SOURCES +=  main.cpp\
             mainwindow.cpp \
             pickreceiver.cpp \
     peerfiletransfer.cpp \
-    filechunker.cpp
+    filechunker.cpp \
+    dynamictreewidgetitem.cpp
 
 HEADERS  += mainwindow.h \
             pickreceiver.h \
     peerfiletransfer.h \
-    filechunker.h
+    filechunker.h \
+    dynamictreewidgetitem.h
 
 FORMS    += mainwindow.ui \
             pickreceiver.ui

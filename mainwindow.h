@@ -3,6 +3,7 @@
 
 #include "peerfiletransfer.h"
 #include <QMainWindow>
+#include <QTreeWidget>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTimer>
@@ -33,7 +34,7 @@ class MainWindow : public QMainWindow
 
 public:
     explicit MainWindow(QWidget *parent = 0);
-    ~MainWindow();  
+    ~MainWindow();
 
 protected:
 
@@ -46,13 +47,14 @@ private:
 
     TransfersView *m_sentView;
     TransfersView *m_receivedView;
-    PeersView *m_peersView;
+    QTreeWidget *m_peersView;
     QStringList m_peersCompletionList; // A list of words from peers data for autocompletion
 
     void initializePeers();
     void initializeServer();
     void readPeersListAndSettings();
     void processSendFiles(const QStringList files);
+    void addTransferToAppropriateView(PeerFileTransfer& transfer);
 
     // The peers we can connect to
     std::vector<std::tuple<QString /* Ip */, int /* port */, QString /* hostname */>>
@@ -68,7 +70,7 @@ private:
     std::unique_ptr<QTimer> m_peersPingTimer;
     std::vector<bool> m_isPeerOnline;
 public:
-    inline bool isPeerActive(int index) {
+    bool isPeerActive(size_t index) const {
       return m_isPeerOnline[index];
     }
 private:

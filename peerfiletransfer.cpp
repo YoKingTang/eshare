@@ -1,7 +1,6 @@
 #include "peerfiletransfer.h"
+#include "mainwindow.h"
 #include <QDataStream>
-#include <QFileInfo>
-#include <QDir>
 
 const char PeerFileTransfer::REQUEST_SEND_PERMISSION[] = "SEND?";
 const char PeerFileTransfer::ACK_SEND_PERMISSION[] = "ACK!";
@@ -17,8 +16,12 @@ const char PeerFileTransfer::NACK_SEND_PERMISSION[] = "NOPE!";
                                             } while(0)
 
  // CLIENT
-PeerFileTransfer::PeerFileTransfer(std::tuple<QString /* Ip */, int /* port */, QString /* hostname */>
+PeerFileTransfer::PeerFileTransfer(MainWindow *mainWindow,
+                                   size_t peerIndex,
+                                   std::tuple<QString /* Ip */, int /* port */, QString /* hostname */>
                                    peer, QString file) :
+  m_mainWindow(mainWindow),
+  m_peerIndex(peerIndex),
   m_file(file),
   m_peer(peer)
 {
@@ -28,12 +31,16 @@ PeerFileTransfer::PeerFileTransfer(std::tuple<QString /* Ip */, int /* port */, 
   connect(m_socket.get(), SIGNAL(readyRead()), this, SLOT(clientReadReady()));
   connect(m_socket.get(), SIGNAL(bytesWritten(qint64)), this, SLOT(updateClientProgress(qint64)));
   connect(m_socket.get(), SIGNAL(error(QAbstractSocket::SocketError)),
-          this, SLOT(socketError(QAbstractSocket::SocketError)));
+          this, SLOT(error(QAbstractSocket::SocketError)));
 }
 
 // SERVER
-PeerFileTransfer::PeerFileTransfer(std::tuple<QString /* Ip */, int /* port */, QString /* hostname */>
+PeerFileTransfer::PeerFileTransfer(MainWindow *mainWindow,
+                                   size_t peerIndex,
+                                   std::tuple<QString /* Ip */, int /* port */, QString /* hostname */>
                                    peer, QTcpSocket *socket, QString downloadPath) :
+  m_mainWindow(mainWindow),
+  m_peerIndex(peerIndex),
   m_peer(peer),
   m_downloadPath(downloadPath)
 {
@@ -179,6 +186,7 @@ void PeerFileTransfer::updateClientProgress(qint64 bytesWritten) // SLOT
 {
   m_bytesWritten += bytesWritten;
 
+  // Main Client DFA
   switch(m_clientState) {
     case SENDING_HEADER_SIZE_AND_HEADER: {
 
@@ -209,6 +217,17 @@ void PeerFileTransfer::updateClientProgress(qint64 bytesWritten) // SLOT
       }
     } break;
     case SENDING_CHUNKS: {
+
+      // Stop the process if the peer we're sending data to went offline
+      if (m_mainWindow->isPeerActive(m_peerIndex) == false) {
+        m_socket->abort();
+        qDebug() << "[CLIENT ERROR] Server suddently disconnected! Transfer corrupted/incompleted";
+        emit serverPeerWentOffline();
+        return;
+      }
+
+      m_completionPercentage = (static_cast<double>(m_bytesWritten) / static_cast<double>(m_bytesToWrite)) * 100;
+      emit fileSentPercentage(m_completionPercentage);
 
       // Check if we transferred everything
       if (m_bytesWritten == m_bytesToWrite) {
@@ -258,10 +277,10 @@ void PeerFileTransfer::updateServerProgress() // SLOT
     m_bytesRead = 0;
     qDebug() << "[SERVER] Header size and header successfully received! Now Chunking";
 
+    m_serverState = RECEIVING_CHUNKS;
+
     // Get filename and create file to start writing data
-    QFileInfo fileInfo(QFile(m_fileHeader.filePath).fileName());
-    QString filename(fileInfo.fileName());
-    m_chunker = std::make_unique<FileChunker>(m_downloadPath + QDir::separator() + filename);
+    m_chunker = std::make_unique<FileChunker>(getServerDestinationFilePath());
     if (!m_chunker->open(READWRITE)) {
       // Could not open the file for writing - abort all the transfer!
       qDebug() << "[SERVER] ABORTING - COULD NOT OPEN FILE!";
@@ -269,15 +288,11 @@ void PeerFileTransfer::updateServerProgress() // SLOT
       emit fileLocked();
       return;
     }
-
-    m_serverState = RECEIVING_CHUNKS;
   };
 
   if(!m_socket->isValid()) {
     qDebug() << "[SERVER] WARNING - invalid socket!";
   }
-
-  //m_socket->waitForReadyRead();
 
   qint64 bytesReceived = m_socket->bytesAvailable();
   while (bytesReceived > 0) { // Necessary since readyRead signals aren't reentrant or queued
@@ -319,10 +334,13 @@ void PeerFileTransfer::updateServerProgress() // SLOT
 
         QByteArray chunk = m_socket->readAll();
 
+        m_completionPercentage = (static_cast<double>(m_bytesRead + chunk.size()) / static_cast<double>(m_bytesToRead)) * 100;
+        emit fileReceivedPercentage(m_completionPercentage);
+
         // Check if we're done
         if (m_bytesRead + chunk.size() == m_bytesToRead) {
-          // DONE! SUCCESS
 
+          // DONE! SUCCESS
           m_chunker->writeNextFileChunk(chunk);
           m_chunker->close();
 

@@ -3,9 +3,9 @@
 
 #include "filechunker.h"
 #include <QTcpSocket>
-#include <QDataStream>
+#include <QFileInfo>
+#include <QDir>
 #include <QString>
-#include <QBuffer>
 #include <QTimer>
 #include <memory>
 #include <tuple>
@@ -33,13 +33,17 @@ struct FileHeader {
   qint64 fileSize;
 };
 
+class MainWindow;
+
 class PeerFileTransfer : public QObject
 {
   Q_OBJECT
 
 public:
-  PeerFileTransfer(std::tuple<QString, int, QString> peer, QString file); // Client
-  PeerFileTransfer(std::tuple<QString, int, QString> peer, QTcpSocket *socket, QString downloadPath); // Server
+  PeerFileTransfer(MainWindow *mainWindow, size_t peerIndex, std::tuple<QString, int, QString> peer,
+                   QString file); // Client
+  PeerFileTransfer(MainWindow *mainWindow, size_t peerIndex, std::tuple<QString, int, QString> peer,
+                   QTcpSocket *socket, QString downloadPath); // Server
   ~PeerFileTransfer();
 
   void start(); // Start transferring/receiving the file
@@ -50,17 +54,16 @@ public:
   static const char NACK_SEND_PERMISSION[];
 
 private:
+  MainWindow *m_mainWindow = nullptr;
   TransferType m_type;
 
-  bool m_authorized = false;
   std::unique_ptr<QTimer> m_authorizationTimer;
 
+  size_t m_peerIndex = -1;
   std::tuple<QString, int, QString> m_peer;
   QString m_file; // If this is a client transfer
   std::unique_ptr<QTcpSocket> m_socket;
 
-  QBuffer m_buffer;
-  QDataStream m_stream;
   std::unique_ptr<FileChunker> m_chunker;
   QByteArray m_serializedHeaderBytes;
 
@@ -76,7 +79,9 @@ private:
   qint64 m_bytesToRead = 0;
   qint64 m_bytesRead = 0;
   QString m_downloadPath; // Folder where to save files
-  void setupDestinationFilePath();
+
+  // Global to both
+  int m_completionPercentage = 0;
 
 private slots:
   void clientSocketConnected();
@@ -92,8 +97,63 @@ signals:
   void timeout();
   void transferDenied();
   void fileLocked();
+  void fileSentPercentage(int);
+  void serverPeerWentOffline();
 
   void receivingComplete();
+  void fileReceivedPercentage(int);
+
+public:
+  // Getters and status queries
+
+  inline TransferType getType() const {
+    return m_type;
+  }
+  inline int getCompletionPercentage() const { // [0;100]
+    return m_completionPercentage;
+  }
+  QString getProgressAsString() const { // e.g. "1.2 GB / 12 GB"
+    // 1.2 GB / 12 GB
+    // ^^^^^^   ^^^^^
+    // size     totalSize
+
+    QString size = "0 KB";
+    QString totalSize = "[N/A]";
+
+    if (m_chunker) {
+      totalSize = FileChunker::formatSizeHuman(m_chunker->getFileSize());
+    }
+
+    if (m_type == CLIENT && m_clientState >= SENDING_HEADER_SIZE_AND_HEADER) {
+      // Chunker is active at this point in read-only mode
+      size = FileChunker::formatSizeHuman (m_bytesWritten);
+    } else if (m_type == SERVER && m_serverState >= RECEIVING_CHUNKS) {
+      // Chunker is active at this point in read/write mode
+      size = FileChunker::formatSizeHuman (m_bytesRead);
+    }
+
+    return size + " / " + totalSize;
+  }
+
+  inline std::tuple<QString, int, QString> getPeer() const {
+    return m_peer;
+  }
+
+  QString getServerDestinationFilePath() const {
+    if (m_type == SERVER && m_serverState >= RECEIVING_CHUNKS) {
+      QFileInfo fileInfo(QFile(m_fileHeader.filePath).fileName());
+      QString filename(fileInfo.fileName());
+      return m_downloadPath + QDir::separator() + filename;
+    }
+    return QString();
+  }
+
+  QString getClientSourceFilePath() const {
+    if (m_type == CLIENT) {
+      return m_file;
+    }
+    return QString();
+  }
 };
 
 #endif // PEERFILETRANSFER_H

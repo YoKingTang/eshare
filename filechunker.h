@@ -15,10 +15,13 @@ public:
   ~FileChunker();
 
   bool open(RWMode mode = READONLY);
+  bool isOpen() const;
   void close();
   bool reachedEOF() const;
 
   qint64 getFileSize() const;
+  // Get a filesize in human-readable form, e.g. 1.2 GB
+  static QString formatSizeHuman(qint64 num);
 
   qint64 chunkSize() const;
 
