@@ -125,11 +125,11 @@ PickReceiver::PickReceiver(QStringList completionWords, MainWindow *parent) :
     ++peerIndex;
   }
 
-  qDebug() << "ui->comboBox_Receiver model: " << ui->comboBox_Receiver->model();
+  //qDebug() << "ui->comboBox_Receiver model: " << ui->comboBox_Receiver->model();
 
   m_completer = new QCompleter(completionWords, this);
 
-  qDebug() << "m_completer model: " << m_completer->model();
+  //qDebug() << "m_completer model: " << m_completer->model();
 
   // Set partial matches active
   m_completer->setCaseSensitivity(Qt::CaseInsensitive);
@@ -144,7 +144,7 @@ PickReceiver::PickReceiver(QStringList completionWords, MainWindow *parent) :
   treeView->header()->setStretchLastSection(false);
   treeView->header()->setSectionResizeMode(0, QHeaderView::Stretch);
 
-  qDebug() << "treeView model: " << treeView->model();
+  //qDebug() << "treeView model: " << treeView->model();
 
   // Get the proxy model used in the completer
   auto proxyModel = m_completer->findChild<QAbstractProxyModel*>();

@@ -1,7 +1,7 @@
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
-#include "peerfiletransfer.h"
+#include "peerthreadtransfer.h"
 #include <QMainWindow>
 #include <QTreeWidget>
 #include <QTcpServer>
@@ -54,7 +54,7 @@ private:
     void initializeServer();
     void readPeersListAndSettings();
     void processSendFiles(const QStringList files);
-    void addTransferToAppropriateView(PeerFileTransfer& transfer);
+    void addTransferToAppropriateView(PeerThreadTransfer& transferThread);
 
     // The peers we can connect to
     std::vector<std::tuple<QString /* Ip */, int /* port */, QString /* hostname */>>
@@ -82,7 +82,7 @@ private:
     std::vector<std::unique_ptr<QTcpSocket>> m_peersClientPingSockets; // Sockets used when pinging peers
 
     // File transfer wrappers - heavy load
-    std::vector<std::unique_ptr<PeerFileTransfer>> m_transfers;
+    std::vector<std::unique_ptr<PeerThreadTransfer>> m_transferThreads;
 
 private slots:
     void pingAllPeers();

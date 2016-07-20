@@ -1,7 +1,6 @@
 #ifndef DYNAMICTREEWIDGETITEM_H
 #define DYNAMICTREEWIDGETITEM_H
 
-#include "peerfiletransfer.h"
 #include <QTreeWidget>
 
 // A dynamic tree widget item is a QTreeWidgetItem which also features slots to be
@@ -9,15 +8,14 @@
 class DynamicTreeWidgetItem : public QObject, public QTreeWidgetItem {
   Q_OBJECT
 public:
-  DynamicTreeWidgetItem(PeerFileTransfer& transfer, QTreeWidget *view);
-
-private:
-  PeerFileTransfer& m_transfer;
+  DynamicTreeWidgetItem (QTreeWidget *view);
 
 public slots:
 
-  // Updates all dynamic info every time there's progress on the transfer
+  // Updates percentage data
   void filePercentage(int value);
+  // Updates destination data (only for server items)
+  void destinationAvailable(QString destination);
 };
 
 #endif // DYNAMICTREEWIDGETITEM_H

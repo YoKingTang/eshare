@@ -12,14 +12,15 @@ const char PeerFileTransfer::NACK_SEND_PERMISSION[] = "NOPE!";
                                                 qDebug() << "SOCKET ERROR at line " << __LINE__; \
                                                 m_socket->abort(); \
                                                 emit socketFailure(); \
+                                                m_parentThread->exit(1); \
                                               } \
                                             } while(0)
 
  // CLIENT
-PeerFileTransfer::PeerFileTransfer(MainWindow *mainWindow,
-                                   size_t peerIndex,
+PeerFileTransfer::PeerFileTransfer(QThread *parent, MainWindow *mainWindow, size_t peerIndex,
                                    std::tuple<QString /* Ip */, int /* port */, QString /* hostname */>
                                    peer, QString file) :
+  m_parentThread(parent),
   m_mainWindow(mainWindow),
   m_peerIndex(peerIndex),
   m_file(file),
@@ -35,17 +36,18 @@ PeerFileTransfer::PeerFileTransfer(MainWindow *mainWindow,
 }
 
 // SERVER
-PeerFileTransfer::PeerFileTransfer(MainWindow *mainWindow,
-                                   size_t peerIndex,
+PeerFileTransfer::PeerFileTransfer(QThread *parent, MainWindow *mainWindow, size_t peerIndex,
                                    std::tuple<QString /* Ip */, int /* port */, QString /* hostname */>
-                                   peer, QTcpSocket *socket, QString downloadPath) :
+                                   peer, qintptr socketDescriptor, QString downloadPath) :
+  m_parentThread(parent),
   m_mainWindow(mainWindow),
   m_peerIndex(peerIndex),
   m_peer(peer),
   m_downloadPath(downloadPath)
 {
-  //socket->state()
-  m_socket.reset(socket);
+  m_socket = std::make_unique<QTcpSocket>();
+  m_socket->setSocketDescriptor(socketDescriptor); // To operate in a different thread, we create another socket
+                                                   // and assign the socket descriptor from the native socket
   m_type = SERVER;
   connect(m_socket.get(), SIGNAL(readyRead()),
           this, SLOT(updateServerProgress()));
@@ -84,7 +86,7 @@ namespace {
   }
 }
 
-void PeerFileTransfer::start() {
+void PeerFileTransfer::execute() {
 
   QString addr, hostname; int port;
   std::tie(addr, port, hostname) = m_peer;
@@ -93,9 +95,6 @@ void PeerFileTransfer::start() {
 
     m_clientState = UNAUTHORIZED;
 
-    // Connect to endpoint and ask for authorization
-    m_socket->connectToHost(addr, port);
-
     // Start authorization timer. If authorization cannot be completed in this time,
     // just drop the entire transfer
     m_authorizationTimer = std::make_unique<QTimer>(this);
@@ -103,7 +102,10 @@ void PeerFileTransfer::start() {
     m_authorizationTimer->setSingleShot(true);
     m_authorizationTimer->start(50000); // 50 seconds ~ human intervention
 
-    qDebug() << "[CLIENT] Trying to connect, starting auth timer";
+    // Connect to endpoint and ask for authorization
+    m_socket->connectToHost(addr, port);
+
+    qDebug() << "[CLIENT] Trying to connect, auth timer started";
 
   } else { // SERVER
 
@@ -142,6 +144,7 @@ void PeerFileTransfer::clientReadReady() // SLOT
       m_socket->close();
       emit transferDenied();
       qDebug() << "[CLIENT] TRANSFER DENIED";
+      m_parentThread->exit(1); // Exit the thread event loop
 
     } else if (command.compare(ACK_SEND_PERMISSION) == 0) {
 
@@ -156,7 +159,7 @@ void PeerFileTransfer::clientReadReady() // SLOT
         qDebug() << "[CLIENT] ABORTING - COULD NOT OPEN FILE!";
         m_socket->abort();
         emit fileLocked();
-        return;
+        m_parentThread->exit(1); // Exit the thread event loop
       }
 
       // Create file header
@@ -194,6 +197,7 @@ void PeerFileTransfer::updateClientProgress(qint64 bytesWritten) // SLOT
         qDebug() << "[CLIENT] Could not send header size - connection issues";
         m_socket->abort();
         emit socketFailure();
+        m_parentThread->exit(1); // Exit the thread event loop
         return;
       }
 
@@ -223,7 +227,7 @@ void PeerFileTransfer::updateClientProgress(qint64 bytesWritten) // SLOT
         m_socket->abort();
         qDebug() << "[CLIENT ERROR] Server suddently disconnected! Transfer corrupted/incompleted";
         emit serverPeerWentOffline();
-        return;
+        m_parentThread->exit(1); // Exit the thread event loop
       }
 
       m_completionPercentage = (static_cast<double>(m_bytesWritten) / static_cast<double>(m_bytesToWrite)) * 100;
@@ -235,6 +239,7 @@ void PeerFileTransfer::updateClientProgress(qint64 bytesWritten) // SLOT
         m_clientState = SENDING_FINISHED;
         m_socket->disconnectFromHost();
         qDebug() << "[" + m_file + "] >> TRANSFER SUCCESSFUL!!! <<";
+        m_parentThread->exit(0); // Exit the thread event loop
         return;
       }
 
@@ -258,12 +263,16 @@ void PeerFileTransfer::error(QAbstractSocket::SocketError) // SLOT
   qDebug() << ">> FAILED TRANSFER FOR FILE [" + m_file + "]!!!";
   m_socket->abort();
   emit socketFailure();
+  m_parentThread->exit(1); // Exit the thread event loop
+  return;
 }
 
 void PeerFileTransfer::authTimeout() // SLOT
 {
   m_socket->abort();
   emit timeout();
+  m_parentThread->exit(1); // Exit the thread event loop
+  return;
 }
 
 void PeerFileTransfer::updateServerProgress() // SLOT
@@ -279,13 +288,18 @@ void PeerFileTransfer::updateServerProgress() // SLOT
 
     m_serverState = RECEIVING_CHUNKS;
 
+    // We have a destination filepath to write data
+    QString destinationFilePath = getServerDestinationFilePath();
+    emit destinationAvailable(destinationFilePath);
+
     // Get filename and create file to start writing data
-    m_chunker = std::make_unique<FileChunker>(getServerDestinationFilePath());
+    m_chunker = std::make_unique<FileChunker>(destinationFilePath);
     if (!m_chunker->open(READWRITE)) {
       // Could not open the file for writing - abort all the transfer!
       qDebug() << "[SERVER] ABORTING - COULD NOT OPEN FILE!";
       m_socket->abort();
       emit fileLocked();
+      m_parentThread->exit(1); // Exit the thread event loop
       return;
     }
   };
@@ -348,6 +362,7 @@ void PeerFileTransfer::updateServerProgress() // SLOT
           m_serverState = RECEIVING_FINISHED;
           m_socket->disconnectFromHost();
           emit receivingComplete();
+          m_parentThread->exit(0); // Exit the thread event loop
           return;
         }
 

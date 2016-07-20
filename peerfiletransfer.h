@@ -3,6 +3,7 @@
 
 #include "filechunker.h"
 #include <QTcpSocket>
+#include <QThread>
 #include <QFileInfo>
 #include <QDir>
 #include <QString>
@@ -34,19 +35,20 @@ struct FileHeader {
 };
 
 class MainWindow;
+class PeerThreadTransfer;
 
 class PeerFileTransfer : public QObject
 {
   Q_OBJECT
 
 public:
-  PeerFileTransfer(MainWindow *mainWindow, size_t peerIndex, std::tuple<QString, int, QString> peer,
+  PeerFileTransfer(QThread *parent, MainWindow *mainWindow, size_t peerIndex, std::tuple<QString, int, QString> peer,
                    QString file); // Client
-  PeerFileTransfer(MainWindow *mainWindow, size_t peerIndex, std::tuple<QString, int, QString> peer,
-                   QTcpSocket *socket, QString downloadPath); // Server
+  PeerFileTransfer(QThread *parent, MainWindow *mainWindow, size_t peerIndex, std::tuple<QString, int, QString> peer,
+                   qintptr socketDescriptor, QString downloadPath); // Server
   ~PeerFileTransfer();
 
-  void start(); // Start transferring/receiving the file
+  void execute(); // Start the transfer (i.e. transmitting/receiving the file)
 
   // Negotiations to transfer files
   static const char REQUEST_SEND_PERMISSION[];
@@ -54,6 +56,9 @@ public:
   static const char NACK_SEND_PERMISSION[];
 
 private:
+  friend class PeerThreadTransfer;
+
+  QThread *m_parentThread = nullptr;
   MainWindow *m_mainWindow = nullptr;
   TransferType m_type;
 
@@ -102,6 +107,8 @@ signals:
 
   void receivingComplete();
   void fileReceivedPercentage(int);
+  // Destination filename has been received from header and downloadpath
+  void destinationAvailable(QString destination);
 
 public:
   // Getters and status queries
