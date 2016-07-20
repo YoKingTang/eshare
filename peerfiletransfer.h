@@ -40,6 +40,7 @@ class PeerFileTransfer : public QObject
 public:
   PeerFileTransfer(std::tuple<QString, int, QString> peer, QString file); // Client
   PeerFileTransfer(std::tuple<QString, int, QString> peer, QTcpSocket *socket, QString downloadPath); // Server
+  ~PeerFileTransfer();
 
   void start(); // Start transferring/receiving the file
 
@@ -61,7 +62,7 @@ private:
   QBuffer m_buffer;
   QDataStream m_stream;
   std::unique_ptr<FileChunker> m_chunker;
-  QByteArray m_serializedHeaderSizeAndHeader;
+  QByteArray m_serializedHeaderBytes;
 
   // Client
   ClientSocketState m_clientState = UNAUTHORIZED;
@@ -87,9 +88,10 @@ private slots:
   void updateServerProgress();
 
 signals:
-  void failure();
+  void socketFailure();
   void timeout();
   void transferDenied();
+  void fileLocked();
 
   void receivingComplete();
 };

@@ -4,14 +4,17 @@
 #include <QString>
 #include <QFile>
 
+enum RWMode {READONLY, READWRITE};
+
 class FileChunker : public QObject
 {
   Q_OBJECT
 
 public:
-  FileChunker(QString file);
+  FileChunker(QString file = "");
   ~FileChunker();
 
+  bool open(RWMode mode = READONLY);
   void close();
   bool reachedEOF() const;
 

@@ -7,8 +7,18 @@ const char PeerFileTransfer::REQUEST_SEND_PERMISSION[] = "SEND?";
 const char PeerFileTransfer::ACK_SEND_PERMISSION[] = "ACK!";
 const char PeerFileTransfer::NACK_SEND_PERMISSION[] = "NOPE!";
 
+#define CHECK_SOCKET_IO_SUCCESS(socketCall) do { \
+                                              auto ret = socketCall; \
+                                              if (ret == -1) { \
+                                                qDebug() << "SOCKET ERROR at line " << __LINE__; \
+                                                m_socket->abort(); \
+                                                emit socketFailure(); \
+                                              } \
+                                            } while(0)
+
+ // CLIENT
 PeerFileTransfer::PeerFileTransfer(std::tuple<QString /* Ip */, int /* port */, QString /* hostname */>
-                                   peer, QString file) : // Client
+                                   peer, QString file) :
   m_file(file),
   m_peer(peer)
 {
@@ -21,8 +31,9 @@ PeerFileTransfer::PeerFileTransfer(std::tuple<QString /* Ip */, int /* port */, 
           this, SLOT(socketError(QAbstractSocket::SocketError)));
 }
 
+// SERVER
 PeerFileTransfer::PeerFileTransfer(std::tuple<QString /* Ip */, int /* port */, QString /* hostname */>
-                                   peer, QTcpSocket *socket, QString downloadPath) : // Server
+                                   peer, QTcpSocket *socket, QString downloadPath) :
   m_peer(peer),
   m_downloadPath(downloadPath)
 {
@@ -33,6 +44,11 @@ PeerFileTransfer::PeerFileTransfer(std::tuple<QString /* Ip */, int /* port */, 
           this, SLOT(updateServerProgress()));
   connect(m_socket.get(), SIGNAL(error(QAbstractSocket::SocketError)),
           this, SLOT(error(QAbstractSocket::SocketError)));
+}
+
+PeerFileTransfer::~PeerFileTransfer() {
+  if (m_socket->isOpen())
+    m_socket->close();
 }
 
 namespace {
@@ -80,14 +96,18 @@ void PeerFileTransfer::start() {
     m_authorizationTimer->setSingleShot(true);
     m_authorizationTimer->start(50000); // 50 seconds ~ human intervention
 
+    qDebug() << "[CLIENT] Trying to connect, starting auth timer";
+
   } else { // SERVER
 
     m_bytesToRead = 0; // Unknown file dimension for now
 
     // Signal to start the transfer
-    m_socket->write(PeerFileTransfer::ACK_SEND_PERMISSION, strlen(PeerFileTransfer::ACK_SEND_PERMISSION) + 1);
+    CHECK_SOCKET_IO_SUCCESS(m_socket->write(PeerFileTransfer::ACK_SEND_PERMISSION, strlen(PeerFileTransfer::ACK_SEND_PERMISSION) + 1));
 
     m_serverState = AUTHORIZATION_SENT;
+
+    qDebug() << "[SERVER] Sent ACK_SEND_PERMISSION, now waiting for header size and header data";
 
   }
 }
@@ -97,6 +117,7 @@ void PeerFileTransfer::clientSocketConnected() // SLOT
   // Ask for authorization to send
   m_socket->write(REQUEST_SEND_PERMISSION);
   // Authorization timer is already running
+  qDebug() << "[CLIENT] Sent REQUEST_SEND_PERMISSION, waiting for permission";
 }
 
 void PeerFileTransfer::clientReadReady() // SLOT
@@ -110,34 +131,45 @@ void PeerFileTransfer::clientReadReady() // SLOT
     if(command.compare(NACK_SEND_PERMISSION) == 0) {
 
       // Transfer denied - abort
+      m_authorizationTimer->stop();
       m_socket->close();
       emit transferDenied();
+      qDebug() << "[CLIENT] TRANSFER DENIED";
+
     } else if (command.compare(ACK_SEND_PERMISSION) == 0) {
 
       // Transfer accepted!
       m_clientState = SENDING_HEADER_SIZE_AND_HEADER;
+      m_authorizationTimer->stop();
 
       // Create chunker for this file
       m_chunker = std::make_unique<FileChunker>(m_file);
+      if (!m_chunker->open(READONLY)) {
+        // Could not open the file for reading - abort all the transfer!
+        qDebug() << "[CLIENT] ABORTING - COULD NOT OPEN FILE!";
+        m_socket->abort();
+        emit fileLocked();
+        return;
+      }
 
       // Create file header
       m_fileHeader = {
         m_file,
         m_chunker->getFileSize()
       };
-      QByteArray serializedHeader = serializeHeader(m_fileHeader);
+      m_serializedHeaderBytes = serializeHeader(m_fileHeader);
+      m_serializedHeaderSize = qint64(m_serializedHeaderBytes.size());
 
-      // Send a stream of header-size + header
-      QDataStream stream(m_serializedHeaderSizeAndHeader);
-      stream << qint64(serializedHeader.size());
-      stream.writeBytes(serializedHeader, serializedHeader.size());
+      // Send the header-size then start sending out the header
+      CHECK_SOCKET_IO_SUCCESS(m_socket->write((const char*)&m_serializedHeaderSize, sizeof(qint64)));
 
       // Calculate data transfers for the header
-      m_bytesToWrite = m_serializedHeaderSizeAndHeader.size();
+      m_bytesToWrite = m_serializedHeaderSize + sizeof(qint64);
       m_bytesWritten = 0;
 
       // Start sending out header size and header
-      m_socket->write(m_serializedHeaderSizeAndHeader);
+      CHECK_SOCKET_IO_SUCCESS(m_socket->write(m_serializedHeaderBytes));
+      qDebug() << "[CLIENT] Sending out serialized header size and header";
     }
 
   }
@@ -150,20 +182,30 @@ void PeerFileTransfer::updateClientProgress(qint64 bytesWritten) // SLOT
   switch(m_clientState) {
     case SENDING_HEADER_SIZE_AND_HEADER: {
 
+      if (m_bytesWritten < sizeof(qint64)) {
+        qDebug() << "[CLIENT] Could not send header size - connection issues";
+        m_socket->abort();
+        emit socketFailure();
+        return;
+      }
+
+      qDebug() << "[CLIENT] Successfully written " << bytesWritten << " out of " << m_bytesToWrite << " to the server";
+
       // Check that the server has received the header size and header
       if (m_bytesWritten < m_bytesToWrite) {
         // Resend the rest of the header
-        QByteArray remainingData = m_serializedHeaderSizeAndHeader.right(m_serializedHeaderSizeAndHeader.size() - m_bytesWritten);
-        m_socket->write(remainingData);
+        QByteArray remainingData = m_serializedHeaderBytes.right(m_serializedHeaderSize - static_cast<int>(m_bytesWritten - sizeof(qint64)));
+        CHECK_SOCKET_IO_SUCCESS(m_socket->write(remainingData));
       } else {
         // Header size and header sent successfully, now send out the rest
         m_clientState = SENDING_CHUNKS;
 
         m_bytesToWrite = m_chunker->getFileSize();
         m_bytesWritten = 0;
+        qDebug() << "[CLIENT] Header size and header successfully sent to the server! Starting chunking..";
 
         // Send first chunk
-        m_socket->write(m_chunker->readNextFileChunk());
+        CHECK_SOCKET_IO_SUCCESS(m_socket->write(m_chunker->readNextFileChunk()));
       }
     } break;
     case SENDING_CHUNKS: {
@@ -172,7 +214,7 @@ void PeerFileTransfer::updateClientProgress(qint64 bytesWritten) // SLOT
       if (m_bytesWritten == m_bytesToWrite) {
         // SUCCESS
         m_clientState = SENDING_FINISHED;
-        m_socket->close();
+        m_socket->disconnectFromHost();
         qDebug() << "[" + m_file + "] >> TRANSFER SUCCESSFUL!!! <<";
         return;
       }
@@ -182,7 +224,7 @@ void PeerFileTransfer::updateClientProgress(qint64 bytesWritten) // SLOT
         m_chunker->movePointerBack(m_chunker->chunkSize() - bytesWritten);
       }
 
-      m_socket->write(m_chunker->readNextFileChunk());
+      CHECK_SOCKET_IO_SUCCESS(m_socket->write(m_chunker->readNextFileChunk()));
 
     } break;
   };
@@ -193,9 +235,10 @@ void PeerFileTransfer::error(QAbstractSocket::SocketError) // SLOT
   // Get the operation the socket requested
   //auto state = *static_cast<ClientSocketState*>(m_socket->property("command").data());
 
-  qDebug() << ">> FAILED TRANSFER FOR FILE [" + m_file + "]!!! <<";
+  //auto test = err;
+  qDebug() << ">> FAILED TRANSFER FOR FILE [" + m_file + "]!!!";
   m_socket->abort();
-  emit failure();
+  emit socketFailure();
 }
 
 void PeerFileTransfer::authTimeout() // SLOT
@@ -206,88 +249,99 @@ void PeerFileTransfer::authTimeout() // SLOT
 
 void PeerFileTransfer::updateServerProgress() // SLOT
 {
-  //qint64 bytesReceived = m_socket->bytesAvailable();
-
   auto setupChunking = [&]() { // Executed when both header size and serialized header are ready
-    QDataStream stream(m_serializedHeaderSizeAndHeader);
-    QByteArray serializedHeader;
-    {
-      char* raw;
-      uint len = static_cast<uint>(m_serializedHeaderSize);
-      stream.readBytes(raw, len);
-      serializedHeader.fromRawData(raw, m_serializedHeaderSize);
-      delete raw;
-    }
+    QDataStream stream(m_serializedHeaderBytes /* Read only access */);
+    stream.setVersion(QDataStream::Qt_5_7);
 
-    m_fileHeader = deserializeHeader(serializedHeader);
+    m_fileHeader = deserializeHeader(m_serializedHeaderBytes);
     m_bytesToRead = m_fileHeader.fileSize;
     m_bytesRead = 0;
+    qDebug() << "[SERVER] Header size and header successfully received! Now Chunking";
 
     // Get filename and create file to start writing data
     QFileInfo fileInfo(QFile(m_fileHeader.filePath).fileName());
     QString filename(fileInfo.fileName());
     m_chunker = std::make_unique<FileChunker>(m_downloadPath + QDir::separator() + filename);
+    if (!m_chunker->open(READWRITE)) {
+      // Could not open the file for writing - abort all the transfer!
+      qDebug() << "[SERVER] ABORTING - COULD NOT OPEN FILE!";
+      m_socket->abort();
+      emit fileLocked();
+      return;
+    }
 
     m_serverState = RECEIVING_CHUNKS;
   };
 
-  // Main DFA
-  switch(m_serverState) {
-    case AUTHORIZATION_SENT:
-    case RECEIVING_HEADER_SIZE_AND_HEADER: {
-      m_serverState = RECEIVING_HEADER_SIZE_AND_HEADER;
+  if(!m_socket->isValid()) {
+    qDebug() << "[SERVER] WARNING - invalid socket!";
+  }
 
-      m_serializedHeaderSizeAndHeader.append(m_socket->readAll());
+  //m_socket->waitForReadyRead();
 
-      if (m_serializedHeaderSizeAndHeader.size() > sizeof(qint64)) {
-        // Get the serialized header size
-        QDataStream stream(m_serializedHeaderSizeAndHeader);
-        stream >> m_serializedHeaderSize;
+  qint64 bytesReceived = m_socket->bytesAvailable();
+  while (bytesReceived > 0) { // Necessary since readyRead signals aren't reentrant or queued
+
+    // Main Server DFA
+    switch(m_serverState) {
+      case AUTHORIZATION_SENT:
+      case RECEIVING_HEADER_SIZE_AND_HEADER: {
+
+        m_serverState = RECEIVING_HEADER_SIZE_AND_HEADER;
+
+        CHECK_SOCKET_IO_SUCCESS(m_socket->read((char*)&m_serializedHeaderSize, sizeof(qint64)));
 
         m_serverState = RECEIVING_HEADER;
 
-        if (m_serializedHeaderSizeAndHeader.size() == sizeof(qint64) + m_serializedHeaderSize) {
+        m_serializedHeaderBytes = m_socket->read(m_serializedHeaderSize);
+
+        if (m_serializedHeaderBytes.size() == m_serializedHeaderSize) {
           // We're lucky, both header size and serialized header have arrived
           setupChunking();
         }
+
         // No luck, next step we'll be receiving other serialized header data
-      }
-    } break;
-    case RECEIVING_HEADER: {
 
-      m_serializedHeaderSizeAndHeader.append(m_socket->readAll());
+      } break;
+      case RECEIVING_HEADER: {
 
-      if (m_serializedHeaderSizeAndHeader.size() == sizeof(qint64) + m_serializedHeaderSize) {
-        // Done, both header size and serialized header have arrived
-        setupChunking();
-      }
-    } break;
-    case RECEIVING_CHUNKS: {
+        qDebug() << "[SERVER] Still receiving serialized header data";
+        m_serializedHeaderBytes.append(m_socket->read(m_serializedHeaderSize - m_serializedHeaderBytes.size()));
 
-      // Core routine - receiving big chunks of data
+        if (m_serializedHeaderBytes.size() == m_serializedHeaderSize) {
+          // Done, both header size and serialized header have arrived
+          setupChunking();
+        }
+      } break;
+      case RECEIVING_CHUNKS: {
 
-      QByteArray chunk = m_socket->readAll();
+        // Core routine - receiving big chunks of data
 
-      // Check if we're done
-      if (m_bytesRead + chunk.size() == m_bytesToRead) {
-        // DONE! SUCCESS
+        QByteArray chunk = m_socket->readAll();
 
+        // Check if we're done
+        if (m_bytesRead + chunk.size() == m_bytesToRead) {
+          // DONE! SUCCESS
+
+          m_chunker->writeNextFileChunk(chunk);
+          m_chunker->close();
+
+          qDebug() << "[serverTransfer] >> FILE SUCCESSFULLY RECEIVED! <<";
+          m_serverState = RECEIVING_FINISHED;
+          m_socket->disconnectFromHost();
+          emit receivingComplete();
+          return;
+        }
+
+        // We still have stuff to read. At this point it doesn't matter if we did read a complete chunk or
+        // less than a chunk
+
+        m_bytesRead += chunk.size();
         m_chunker->writeNextFileChunk(chunk);
-        m_chunker->close();
 
-        qDebug() << "[serverTransfer] >> FILE SUCCESSFULLY RECEIVED! <<";
-        m_serverState = RECEIVING_FINISHED;
-        m_socket->close();
-        emit receivingComplete();
-        return;
-      }
+      } break;
+    };
 
-      // We still have stuff to read. At this point it doesn't matter if we did read a complete chunk or
-      // less than a chunk
-
-      m_bytesRead += chunk.size();
-      m_chunker->writeNextFileChunk(chunk);
-
-    } break;
-  };
+    bytesReceived = m_socket->bytesAvailable();
+  }
 }

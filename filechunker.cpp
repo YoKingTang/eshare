@@ -10,6 +10,10 @@ FileChunker::~FileChunker() {
     m_file.close();
 }
 
+bool FileChunker::open(RWMode mode) {
+  return m_file.open((mode == READONLY) ? QIODevice::ReadOnly : QIODevice::ReadWrite);
+}
+
 void FileChunker::close() {
   if (m_file.isOpen())
     m_file.close();

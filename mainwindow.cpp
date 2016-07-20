@@ -330,7 +330,7 @@ void MainWindow::readPeersListAndSettings() {
 
 void MainWindow::pingAllPeers() { // SLOT
 
-  qDebug() << "[TIMER ELAPSED - pingAllPeers] Trying to ping all peers";
+  // qDebug() << "[TIMER ELAPSED - pingAllPeers] Trying to ping all peers";
 
   size_t index = 0;
   for(auto& tuple : m_peers) {
@@ -386,11 +386,11 @@ void MainWindow::updateClientProgress() // SLOT
 
         // Ping finished
         socket->setProperty("command", PingClientSocketState::DONE);
-        socket->close();
+        socket->disconnectFromHost();
         auto item = m_peersView->topLevelItem(peerIndex);
         item->setIcon(0, QIcon(":res/green_light.png"));
         m_isPeerOnline[peerIndex] = true;
-        qDebug() << "[updateClientProgress] Peer " << std::get<2>(peer) << " is alive 'n kicking";
+        //qDebug() << "[updateClientProgress] Peer " << std::get<2>(peer) << " is alive 'n kicking";
 
       } else {
 
@@ -415,7 +415,7 @@ void MainWindow::socketError(QAbstractSocket::SocketError) // SLOT
   // Get the operation the socket requested and the endpoint it communicated with
   auto state = *static_cast<PingClientSocketState*>(socket->property("command").data());
   const int peerIndex = socket->property("peer_index").toInt();
-  auto& peer = m_peers[peerIndex];
+  //auto& peer = m_peers[peerIndex];
 
   switch(state) {
     case CONTACTED_HOST_FOR_PING: {
@@ -423,7 +423,7 @@ void MainWindow::socketError(QAbstractSocket::SocketError) // SLOT
       auto item = m_peersView->topLevelItem(peerIndex);
       item->setIcon(0, QIcon(":res/red_light.png"));
       m_isPeerOnline[peerIndex] = false;
-      qDebug() << "[socketError] Peer " << std::get<2>(peer) << " is NOT alive";
+      //qDebug() << "[socketError] Peer " << std::get<2>(peer) << " is NOT alive";
     } break;
   }
 
@@ -431,12 +431,18 @@ void MainWindow::socketError(QAbstractSocket::SocketError) // SLOT
 
 void MainWindow::acceptConnection() // SLOT
 {
+  if (m_tcpServer.hasPendingConnections() == false)
+    return;
+
   auto newSocketConnection = m_tcpServer.nextPendingConnection();
+  if (m_tcpServerConnections.find(newSocketConnection) != m_tcpServerConnections.end())
+    return; // This connection is already being processed
+
   newSocketConnection->setProperty("command", ListeningServerSocketState::IDLE);
   m_tcpServerConnections.insert(newSocketConnection);
 
   QString addr = newSocketConnection->peerAddress().toString();
-  int port = newSocketConnection->peerPort();
+  //int port = newSocketConnection->peerPort();
 
   // Check that this is a registered peer, otherwise refuse the connection
   {
@@ -458,7 +464,7 @@ void MainWindow::acceptConnection() // SLOT
 
 //  serverStatusLabel->setText(tr("Accepted connection"));
 
-  qDebug() << "[acceptConnection] Accepted connection from " << addr << "/" << port;
+  //qDebug() << "[SERVER] Accepted connection from " << addr << "/" << port;
 }
 
 void MainWindow::updateServerProgress() // SLOT
@@ -481,10 +487,14 @@ void MainWindow::updateServerProgress() // SLOT
 
         // Answer with "PONG!" and close 
         socket->write(PONG, sizeof(PONG));
-        socket->close();
+        socket->disconnectFromHost();
+        connect(socket, &QAbstractSocket::disconnected,
+                socket, &QObject::deleteLater); // Mark for deletion as soon as disconnected
         m_tcpServerConnections.remove(socket);
 
       } else if (command.compare(PeerFileTransfer::REQUEST_SEND_PERMISSION) == 0) {
+
+        qDebug() << "[SERVER] Received REQUEST_SEND_PERMISSION, acknowledging";
 
         // Permission to start transfer -> ask the user or do as instructed
         //DEBUG - ALWAYS TRUE
@@ -493,6 +503,11 @@ void MainWindow::updateServerProgress() // SLOT
         if(permission) {
 
           // Start transfer
+          qDebug() << "[SERVER] Transmission Acknowledged - Start transfer";
+
+          // IMPORTANT: disconnect all signals from this socket, the PeerFileTransfer class will
+          // handle them from this point onward. This is a filetransfer, no longer a ping transmission
+          socket->disconnect();
 
           size_t peerIndex = socket->property("peer_index").toULongLong();
           m_transfers.emplace_back(std::make_unique<PeerFileTransfer>(m_peers[peerIndex], socket, m_defaultDownloadPath)); // Server version
@@ -500,8 +515,11 @@ void MainWindow::updateServerProgress() // SLOT
           m_transfers.back()->start();
 
         } else {
+          qDebug() << "[SERVER] Denying transfer request - sending NACK_SEND_PERMISSION";
           socket->write(PeerFileTransfer::NACK_SEND_PERMISSION, strlen(PeerFileTransfer::NACK_SEND_PERMISSION) + 1);
-          socket->close();
+          socket->disconnectFromHost();
+          connect(socket, &QAbstractSocket::disconnected,
+                  socket, &QObject::deleteLater); // Mark for deletion as soon as disconnected
           m_tcpServerConnections.remove(socket);
         }
 
@@ -519,6 +537,8 @@ void MainWindow::serverSocketError(QAbstractSocket::SocketError) // SLOT
   qDebug() << "[ERROR - serverSocketError] Unexpected error while communicating with client";
   socket->abort();
   m_tcpServerConnections.remove(socket);
+  connect(socket, &QAbstractSocket::disconnected,
+          socket, &QObject::deleteLater); // Mark for deletion as soon as disconnected
 }
 
 QString MainWindow::getDownloadPath() const {
