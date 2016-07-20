@@ -581,7 +581,10 @@ void MainWindow::dropEvent(QDropEvent *event) {
 void MainWindow::processSendFiles(const QStringList files) {
   // Prompt for a receiver with a word list based on all host names
   PickReceiver dialog(m_peersCompletionList, this);
-  dialog.exec();
+  auto dialogResult = dialog.exec();
+  if (dialogResult != QDialog::DialogCode::Accepted)
+    return;
+
   int index = dialog.getSelectedItem();
 
   if (index == -1 || index >= m_peers.size()) {

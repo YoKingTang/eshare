@@ -5,54 +5,50 @@
 #include <QItemSelectionModel>
 #include <QItemDelegate>
 #include <QPainter>
+#include <QPixmap>
 
-// A more advanced autocompleter
-//class AdvancedAutoCompleter : public QCompleter {
-//public:
-//  AdvancedAutoCompleter(QObject *parent = nullptr) :
-//    QCompleter(parent), m_filterProxyModel(this) {}
+/*
+ * The code below is a QCompletion delegate which searches through a proxy model the index into
+ * the original model corresponding to the selected index. It is an enhanced version of the
+ * following code for delegates
 
-//  void setModel(QAbstractItemModel *model) {
-//    m_sourceModel = model;
-//    QCompleter::setModel(&m_filterProxyModel);
-//  }
+class MyCompleter: public QCompleter {
+    Q_OBJECT
+public:
+    MyCompleter(QObject *p = 0): QCompleter(p) {
+        connect(this, SIGNAL(activated(QModelIndex)), SLOT(generateIndexSignal(QModelIndex)));
+    }
 
-//  class InnerProxyModel : public QSortFilterProxyModel {
-//  public:
-//    bool filterAcceptsRow(int source_row, const QModelIndex &source_parent) {
-//      index0 = this->sourceModel()->index(source_row, 0, source_parent);
-//      QString(this->sourceModel()->data(index0)).toLower()
-//      return m_string in ;
-//    }
-//  };
+    MyCompleter(QAbstractItemModel *model, QObject *p = 0): QCompleter(model, p) {
+        connect(this, SIGNAL(activated(QModelIndex)), SLOT(generateIndexSignal(QModelIndex)));
+    }
 
-//  QStringList splitPath(const QString& path) {
-//    m_string = path;
-//    {
-//      // Update model
-//      if (!m_modifiedModel)
-//        m_filterProxyModel.setSourceModel(m_sourceModel);
+    MyCompleter(const QStringList& strings, QObject *p = 0): QCompleter(strings, p) {
+        connect(this, SIGNAL(activated(QModelIndex)), SLOT(generateIndexSignal(QModelIndex)));
+    }
 
-//      // Perform a deep-split
-//      auto pattern = QRegExp(m_string, Qt::CaseInsensitive, QRegExp::FixedString);
-//      m_filterProxyModel.setFilterRegExp(pattern);
-//    }
+signals:
+    void selectedSourceRow(int index);
 
-//    if (m_filterProxyModel.rowCount() == 0) {
-//      m_modifiedModel = false;
-//      m_filterProxyModel.setSourceModel(new QStringListModel(QStringList(path)));
-//      return QStringList(path);
-//    }
+private slots:
+    void generateIndexSignal(const QModelIndex& index)
+    {
+        QAbstractItemModel * const baseModel = model();
+        auto lol = completionRole();
+        auto lol1 = index.data();
+        QModelIndexList indexList = baseModel->match(
+            baseModel->index(0, completionColumn(), QModelIndex()),
+            completionRole(),
+            index.data(),
+            1,
+            Qt::MatchExactly);
+        if (!indexList.isEmpty()) {
+            emit selectedSourceRow(indexList.at(0).row());
+        }
+    }
+};
 
-//    return QStringList();
-//  }
-//private:
-//  QString m_string;
-//  QAbstractItemModel *m_sourceModel = nullptr;
-//  QSortFilterProxyModel m_filterProxyModel;
-//};
-
-
+*/
 
 // This delegate for the items in the QCompletion popup model helps drawing and selecting
 // the first item of the searchbox
@@ -60,10 +56,10 @@ class TreeViewItemDelegate : public QItemDelegate
 {
 
 public:
-    inline TreeViewItemDelegate(QAbstractItemModel *comboBoxModel,
+    inline TreeViewItemDelegate(QAbstractProxyModel *proxyModel, // The proxy model used by QCompleter
                                 QItemSelectionModel *selModel,
-                                QMainWindow *mainWindow) :
-      m_comboBoxModel(comboBoxModel),
+                                MainWindow *mainWindow) :
+      m_proxyModel(proxyModel),
       m_selModel(selModel),
       m_mainWindow(mainWindow),
       QItemDelegate(mainWindow) {}
@@ -73,34 +69,46 @@ public:
     {
         if (index.row() == 0) {
 
-          auto realIndex = index.data(Qt::UserRole).toInt();
-          //qDebug() << "Selected one is " << realIndex;
-
-          // Also select the first item (and clear the previous one)
+          // Select the first item of the proxy model (i.e. TreeView) and clear the previous one
           m_selModel->setCurrentIndex(index, QItemSelectionModel::Current);
+
+          auto ind = m_proxyModel->mapToSource(index); // Index into the QCompleter model
+
+          //qDebug() << "model mapped to source through QAbstractProxyModel: " << ind.model();
+
+          // Get the index in the original combo box for the newly selected item
+          const QAbstractItemModel * const baseModel = ind.model();
+          QModelIndexList indexList = baseModel->match(
+              baseModel->index(0, 0 /* */, QModelIndex()),
+              Qt::EditRole,
+              ind.data(),
+              1,
+              Qt::MatchExactly);
+
+          // Draw an online icon for the candidate one
+          if (!indexList.isEmpty()) {
+            bool active = m_mainWindow->isPeerActive(indexList.at(0).row());
+            QRect itemRect = this->rect(option, index, Qt::EditRole);
+            if (active) {
+              painter->drawPixmap(itemRect.x() + itemRect.width(), itemRect.y(), 15, 15,
+                                  QIcon(":res/green_light.png").pixmap(QSize(15, 15)));
+            } else {
+              painter->drawPixmap(itemRect.x() + itemRect.width(), itemRect.y(), 15, 15,
+                                  QIcon(":res/red_light.png").pixmap(QSize(15, 15)));
+            }
+          }
+
         }
 
-
-
-
-        //m_mainWindow->isPeerActive()
-
-        //auto item = m_peersView->topLevelItem(peerIndex);
-        //item->setIcon(0, QIcon(":res/red_light.png"));
-
-        QItemDelegate::paint(painter, option, index);
-
-//        // Draw the progress bar onto the view
-//        QBrush color(QColor(255, 0, 0));
-//        painter->fillRect(0, 0, 10, 10, color );
+        QItemDelegate::paint(painter, option, index); // Draw the rest
     }
 private:
     QItemSelectionModel *m_selModel = nullptr;
-    QMainWindow *m_mainWindow = nullptr;
-    QAbstractItemModel *m_comboBoxModel = nullptr;
+    MainWindow *m_mainWindow = nullptr;
+    QAbstractProxyModel *m_proxyModel = nullptr;
 };
 
-PickReceiver::PickReceiver(QStringList completionWords, QMainWindow *parent) :
+PickReceiver::PickReceiver(QStringList completionWords, MainWindow *parent) :
   QDialog((QWidget*)parent),
   ui(new Ui::PickReceiver)
 {
@@ -117,7 +125,11 @@ PickReceiver::PickReceiver(QStringList completionWords, QMainWindow *parent) :
     ++peerIndex;
   }
 
+  qDebug() << "ui->comboBox_Receiver model: " << ui->comboBox_Receiver->model();
+
   m_completer = new QCompleter(completionWords, this);
+
+  qDebug() << "m_completer model: " << m_completer->model();
 
   // Set partial matches active
   m_completer->setCaseSensitivity(Qt::CaseInsensitive);
@@ -132,9 +144,12 @@ PickReceiver::PickReceiver(QStringList completionWords, QMainWindow *parent) :
   treeView->header()->setStretchLastSection(false);
   treeView->header()->setSectionResizeMode(0, QHeaderView::Stretch);
 
-  treeView->setItemDelegate(new TreeViewItemDelegate(ui->comboBox_Receiver->model(),
-                                                     treeView->selectionModel(), parent));
+  qDebug() << "treeView model: " << treeView->model();
 
+  // Get the proxy model used in the completer
+  auto proxyModel = m_completer->findChild<QAbstractProxyModel*>();
+  // Set up a delegate to autoselect the first item and to show additional online graphics
+  treeView->setItemDelegate(new TreeViewItemDelegate(proxyModel, treeView->selectionModel(), parent));
 
   ui->comboBox_Receiver->setEditable(true);
   ui->comboBox_Receiver->setCompleter(m_completer);
@@ -151,11 +166,9 @@ int PickReceiver::getSelectedItem() const {
 }
 
 void PickReceiver::on_pushButton_OK_clicked() {
-  setResult(DialogCode::Accepted);
-  this->close();
+  this->accept();
 }
 
 void PickReceiver::on_pushButton_Cancel_clicked() {
-  setResult(DialogCode::Rejected);
-  this->close();
+  this->reject();
 }

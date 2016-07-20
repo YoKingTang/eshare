@@ -14,7 +14,7 @@ class PickReceiver : public QDialog
   Q_OBJECT
 
 public:
-  explicit PickReceiver(QStringList completionWords, QMainWindow *parent = 0);
+  explicit PickReceiver(QStringList completionWords, MainWindow *parent = 0);
   ~PickReceiver();
 
   int getSelectedItem() const;
