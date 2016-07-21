@@ -19,19 +19,18 @@ PeerThreadTransfer::PeerThreadTransfer(TransferType type,
 void PeerThreadTransfer::run() // This function will run in a different thread!
 {
   //
-  // Initialize a PeerFileTransfer encapsulation
+  // Initialize a PeerFileTransfer encapsulation and link messages to our proxies
   //
   std::unique_ptr<PeerFileTransfer> transfer;
+  Qt::ConnectionType ctype = static_cast<Qt::ConnectionType>(Qt::UniqueConnection | Qt::DirectConnection);
   if (m_type == CLIENT) {
     transfer = std::make_unique<PeerFileTransfer>(this, m_mainWindow, m_peerIndex, m_peer, m_fileOrDownloadPath);
-    connect(transfer.get(), SIGNAL(fileSentPercentage(int)), this, SLOT(filePercentageSlot(int)));
+    connect(transfer.get(), SIGNAL(fileSentPercentage(int)), this, SLOT(filePercentageSlot(int)), ctype);
   } else { // SERVER
     transfer = std::make_unique<PeerFileTransfer>(this, m_mainWindow, m_peerIndex, m_peer, m_socketDescriptor, m_fileOrDownloadPath);
-    connect(transfer.get(), SIGNAL(fileReceivedPercentage(int)), this, SLOT(filePercentageSlot(int)));
-    connect(transfer.get(), SIGNAL(destinationAvailable(QString)), this, SLOT(destinationAvailableSlot(QString)));
+    connect(transfer.get(), SIGNAL(fileReceivedPercentage(int)), this, SLOT(filePercentageSlot(int)), ctype);
+    connect(transfer.get(), SIGNAL(destinationAvailable(QString)), this, SLOT(destinationAvailableSlot(QString)), ctype);
   }
-
-  // Link messages to our proxies
 
   //
   // Start the appropriate event loop and resume connection handling

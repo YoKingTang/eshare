@@ -50,6 +50,11 @@ private:
     QTreeWidget *m_peersView;
     QStringList m_peersCompletionList; // A list of words from peers data for autocompletion
 
+    // Negotiations to transfer files - Make sure these are the same for PeerFileTransfer
+    const char REQUEST_SEND_PERMISSION[6] = "SEND?";
+    const char ACK_SEND_PERMISSION[5] = "ACK!";
+    const char NACK_SEND_PERMISSION[6] = "NOPE!";
+
     void initializePeers();
     void initializeServer();
     void readPeersListAndSettings();

@@ -24,7 +24,6 @@ enum ClientSocketState {
 enum ServerSocketState {
   AUTHORIZATION_SENT,
   RECEIVING_HEADER_SIZE_AND_HEADER,
-  RECEIVING_HEADER,
   RECEIVING_CHUNKS,
   RECEIVING_FINISHED
 };
@@ -51,9 +50,11 @@ public:
   void execute(); // Start the transfer (i.e. transmitting/receiving the file)
 
   // Negotiations to transfer files
-  static const char REQUEST_SEND_PERMISSION[];
-  static const char ACK_SEND_PERMISSION[];
-  static const char NACK_SEND_PERMISSION[];
+  const char REQUEST_SEND_PERMISSION[6] = "SEND?";
+  const char ACK_SEND_PERMISSION[5] = "ACK!";
+  const char NACK_SEND_PERMISSION[6] = "NOPE!";
+
+  const char ACK_CHUNK[7] = "ACK_CH";
 
 private:
   friend class PeerThreadTransfer;
@@ -70,10 +71,12 @@ private:
   std::unique_ptr<QTcpSocket> m_socket;
 
   std::unique_ptr<FileChunker> m_chunker;
-  QByteArray m_serializedHeaderBytes;
+  void sendData();
 
   // Client
   ClientSocketState m_clientState = UNAUTHORIZED;
+  bool m_lastChunkAcknowledged = true;
+  bool m_allChunksSent = false;
   qint64 m_serializedHeaderSize = 0;
   FileHeader m_fileHeader;
   qint64 m_bytesToWrite = 0;
@@ -102,7 +105,7 @@ private slots:
   void updateServerProgress();
 
   // Both
-  void error(QAbstractSocket::SocketError);
+  void error(QAbstractSocket::SocketError err);
   void onDisconnected();
 
 signals:

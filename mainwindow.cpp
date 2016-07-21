@@ -540,7 +540,7 @@ void MainWindow::updateServerProgress() // SLOT
                 socket, &QObject::deleteLater); // Mark for deletion as soon as disconnected
         m_tcpServerConnections.remove(socket);
 
-      } else if (command.compare(PeerFileTransfer::REQUEST_SEND_PERMISSION) == 0) {
+      } else if (command.compare(REQUEST_SEND_PERMISSION) == 0) {
 
         qDebug() << "[SERVER] Received REQUEST_SEND_PERMISSION (" << data.size() << " bytes), acknowledging";
 
@@ -562,16 +562,22 @@ void MainWindow::updateServerProgress() // SLOT
                                                                               m_defaultDownloadPath,
                                                                               socket->socketDescriptor())); // Server version
           // Delete the original socket when the thread is done (security measure to prevent socket descriptor thrashing)
-          connect(m_transferThreads.back().get(), SIGNAL(finished()), socket, SLOT(deleteLater()));
+          // connect(m_transferThreads.back().get(), SIGNAL(finished()), socket, SLOT(deleteLater()));
 
           addTransferToAppropriateView(*m_transferThreads.back());
 
+          m_transferThreads.back()->moveToThread(m_transferThreads.back().get()); // Relinquish ownership of this object to the new thread (including slots)
           m_transferThreads.back()->start(); // Start the transfer
 
         } else {
           qDebug() << "[SERVER] Denying transfer request - sending NACK_SEND_PERMISSION";
-          socket->write(PeerFileTransfer::NACK_SEND_PERMISSION, strlen(PeerFileTransfer::NACK_SEND_PERMISSION) + 1);
-          socket->flush();
+
+          QString command = QString(NACK_SEND_PERMISSION);
+          QByteArray block;
+          QDataStream out(&block, QIODevice::WriteOnly);
+          out.setVersion(QDataStream::Qt_5_7);
+          out << command;
+          socket->write(block);
           socket->disconnectFromHost();
           connect(socket, &QAbstractSocket::disconnected,
                   socket, &QObject::deleteLater); // Mark for deletion as soon as disconnected
@@ -681,6 +687,7 @@ void MainWindow::processSendFiles(const QStringList files) {
 
     addTransferToAppropriateView(*m_transferThreads.back());
 
+    m_transferThreads.back()->moveToThread(m_transferThreads.back().get()); // Relinquish ownership of this object to the new thread (including slots)
     m_transferThreads.back()->start(); // Start the transfer
   }
 }
