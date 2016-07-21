@@ -231,10 +231,10 @@ void MainWindow::initializePeers() {
 
     // Create client socket and link the signals
     m_peersClientPingSockets.emplace_back(std::make_unique<QTcpSocket>());
-    connect(m_peersClientPingSockets.back().get(), SIGNAL(connected()), this, SLOT(socketConnected()));
-    connect(m_peersClientPingSockets.back().get(), SIGNAL(readyRead()), this, SLOT(updateClientProgress()));
+    connect(m_peersClientPingSockets.back().get(), SIGNAL(connected()), this, SLOT(socketConnected()), Qt::DirectConnection);
+    connect(m_peersClientPingSockets.back().get(), SIGNAL(readyRead()), this, SLOT(updateClientProgress()), Qt::DirectConnection);
     connect(m_peersClientPingSockets.back().get(), SIGNAL(error(QAbstractSocket::SocketError)),
-            this, SLOT(socketError(QAbstractSocket::SocketError)));
+            this, SLOT(socketError(QAbstractSocket::SocketError)), Qt::DirectConnection);
 
     m_peersClientPingSockets.back()->setProperty("peer_index", index);
     m_peersClientPingSockets.back()->setProperty("command", PingClientSocketState::DONE);
@@ -266,7 +266,7 @@ void MainWindow::initializeServer() {
     exit(-1); // Cannot recover
   }
 
-  connect(&m_tcpServer, SIGNAL(newConnection()), this, SLOT(acceptConnection()));
+  connect(&m_tcpServer, SIGNAL(newConnection()), this, SLOT(acceptConnection()), Qt::DirectConnection);
 
   qDebug() << "[initializeServer] Server now listening on port " << m_localPort;
 }
@@ -374,7 +374,8 @@ void MainWindow::pingAllPeers() { // SLOT
     // Give other time to slow pings
     auto state = *static_cast<PingClientSocketState*>(socket.property("command").data());
     if (state == PingClientSocketState::DONE) {
-      socket.setProperty("command", PingClientSocketState::CONTACTED_HOST_FOR_PING);
+      socket.abort(); // Make sure no pending connections are left
+      socket.setProperty("command", PingClientSocketState::CONTACTED_HOST_FOR_PING);      
       socket.connectToHost(ip, port);
     }
 
@@ -395,6 +396,7 @@ void MainWindow::socketConnected() // SLOT
     case CONTACTED_HOST_FOR_PING: {
       socket->setProperty("command", PingClientSocketState::WAITING_FOR_PONG);
       socket->write(PING, sizeof(PING)); // N.b. TCP/IP MTU over ethernet packet size ~ 1500 bytes
+      socket->flush();
     } break;
     default: {
       // Unhandled state - error. Reset connection
@@ -503,9 +505,9 @@ void MainWindow::acceptConnection() // SLOT
 
   // Process the connection
   connect(newSocketConnection, SIGNAL(readyRead()),
-          this, SLOT(updateServerProgress()));
+          this, SLOT(updateServerProgress()), Qt::DirectConnection);
   connect(newSocketConnection, SIGNAL(error(QAbstractSocket::SocketError)),
-          this, SLOT(serverSocketError(QAbstractSocket::SocketError)));
+          this, SLOT(serverSocketError(QAbstractSocket::SocketError)), Qt::DirectConnection);
 
 //  serverStatusLabel->setText(tr("Accepted connection"));
 
@@ -532,6 +534,7 @@ void MainWindow::updateServerProgress() // SLOT
 
         // Answer with "PONG!" and close 
         socket->write(PONG, sizeof(PONG));
+        socket->flush();
         socket->disconnectFromHost();
         connect(socket, &QAbstractSocket::disconnected,
                 socket, &QObject::deleteLater); // Mark for deletion as soon as disconnected
@@ -539,7 +542,7 @@ void MainWindow::updateServerProgress() // SLOT
 
       } else if (command.compare(PeerFileTransfer::REQUEST_SEND_PERMISSION) == 0) {
 
-        qDebug() << "[SERVER] Received REQUEST_SEND_PERMISSION, acknowledging";
+        qDebug() << "[SERVER] Received REQUEST_SEND_PERMISSION (" << data.size() << " bytes), acknowledging";
 
         // Permission to start transfer -> ask the user or do as instructed
         //DEBUG - ALWAYS TRUE
@@ -568,6 +571,7 @@ void MainWindow::updateServerProgress() // SLOT
         } else {
           qDebug() << "[SERVER] Denying transfer request - sending NACK_SEND_PERMISSION";
           socket->write(PeerFileTransfer::NACK_SEND_PERMISSION, strlen(PeerFileTransfer::NACK_SEND_PERMISSION) + 1);
+          socket->flush();
           socket->disconnectFromHost();
           connect(socket, &QAbstractSocket::disconnected,
                   socket, &QObject::deleteLater); // Mark for deletion as soon as disconnected

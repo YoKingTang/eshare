@@ -88,14 +88,22 @@ private:
   // Global to both
   int m_completionPercentage = 0;
 
+  static int NEW_TRANSFER_NUMBER; // DEBUG
+  int TRANSFER_NUMBER; // DEBUG
+
 private slots:
+  // Client only
   void clientSocketConnected();
   void clientReadReady();
-  void updateClientProgress(qint64 bytesWritten);
-  void error(QAbstractSocket::SocketError);
+  void updateClientProgress(qint64 bytesWritten);  
   void authTimeout();
 
+  // Server only
   void updateServerProgress();
+
+  // Both
+  void error(QAbstractSocket::SocketError);
+  void onDisconnected();
 
 signals:
   void socketFailure();
@@ -108,7 +116,7 @@ signals:
   void receivingComplete();
   void fileReceivedPercentage(int);
   // Destination filename has been received from header and downloadpath
-  void destinationAvailable(QString destination);
+  void destinationAvailable(QString destination);  
 
 public:
   // Getters and status queries
