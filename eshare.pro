@@ -10,16 +10,19 @@ TARGET = eshare
 TEMPLATE = app
 
 
-SOURCES +=  main.cpp\
-            mainwindow.cpp \
-    filechunker.cpp
+SOURCES +=  main.cpp \
+    Listener/RequestListener.cpp \
+    UI/MainWindow.cpp
 
-HEADERS  += mainwindow.h \
-    filechunker.h
+HEADERS  += \
+    Data/TransferRequest.h \
+    Listener/RequestListener.h \
+    UI/MainWindow.h
 
-FORMS    += mainwindow.ui \
-            pickreceiver.ui
+FORMS    += \
+            UI/PickReceiver.ui \
+    UI/MainWindow.ui
 
 DISTFILES +=
 
-RESOURCES += resources.qrc
+RESOURCES += Resources.qrc

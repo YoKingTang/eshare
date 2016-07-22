@@ -1,4 +1,4 @@
-#include "mainwindow.h"
+#include <UI/MainWindow.h>
 #include "ui_mainwindow.h"
 #include <QTreeWidget>
 #include <QItemDelegate>
@@ -6,7 +6,6 @@
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QMessageBox>
-#include <QLinearGradient>
 #include <QPainter>
 #include <QDir>
 #include <QDragMoveEvent>
@@ -16,6 +15,8 @@
 #include <sstream>
 #include <algorithm>
 #include <functional>
+#include <QDataStream>
+#include <QNetworkInterface>
 
 #include <iostream> // DEBUG
 
@@ -171,6 +172,8 @@ MainWindow::MainWindow(QWidget *parent) :
 
     //m_defaultDownloadPath = QDir::currentPath();
 
+    connect(ui->pushButton, SIGNAL(clicked(bool)), this, SLOT(SIMULATE_SEND(bool)));
+
     initialize_peers();
     initialize_server();
 }
@@ -236,9 +239,9 @@ void MainWindow::read_peers_from_file()
     ss >> property;
     ss >> string(); // Eat '='
 
-    if (property.compare("local_ping_port") == 0)
+    if (property.compare("local_service_port") == 0)
     {
-      ss >> m_ping_port;
+      ss >> m_service_port;
     }
     else if (property.compare("local_transfer_port") == 0)
     {
@@ -247,14 +250,14 @@ void MainWindow::read_peers_from_file()
     else if (property.compare("peer") == 0)
     {
       string addr;
-      int ping_port = 66; // Default
+      int service_port = 66; // Default
       int transfer_port = 67; // Default
       ss >> addr;
       auto s1 = addr.find('/');
       auto s2 = addr.find('/', s1 + 1);
       if (s1 != addr.npos && s2 != addr.npos)
       {
-        ping_port = stoi(addr.substr(s1 + 1, s2));
+        service_port = stoi(addr.substr(s1 + 1, s2));
         transfer_port = stoi(addr.substr(s2 + 1));
         addr.resize(s1);
       }
@@ -262,7 +265,7 @@ void MainWindow::read_peers_from_file()
       getline(ss, hostname); // All the rest
       hostname = trim(hostname);
 
-      m_peers.emplace_back(QString::fromStdString(addr), ping_port, transfer_port, QString::fromStdString(hostname));
+      m_peers.emplace_back(QString::fromStdString(addr), service_port, transfer_port, QString::fromStdString(hostname));
     }
     else if (property.compare("default_download_path") == 0)
     {
@@ -294,8 +297,8 @@ void MainWindow::initialize_peers()
   size_t index = 0;
   for(auto& tuple : m_peers)
   {
-    QString ip, hostname; int ping_port, transfer_port;
-    std::tie(ip, ping_port, transfer_port, hostname) = tuple; // Unpack peer data
+    QString ip, hostname; int service_port, transfer_port;
+    std::tie(ip, service_port, transfer_port, hostname) = tuple; // Unpack peer data
 
     QTreeWidgetItem *item = new QTreeWidgetItem(m_peersView);
     item->setText(1, hostname);
@@ -308,5 +311,156 @@ void MainWindow::initialize_peers()
 
 void MainWindow::initialize_server()
 {
+  if (!m_service_server.listen(QHostAddress::LocalHost, m_service_port)) {
+    QMessageBox::critical(this, tr("Server"),
+                          tr("Errore durante l'inizializzazione del service server: '%1'\n\nL'applicazione sara' chiusa.")
+                          .arg(m_service_server.errorString()));
+    exit(1); // Cannot recover
+  }
 
+  connect(&m_service_server, SIGNAL(newConnection()), this, SLOT(process_new_connection()));
+
+  qDebug() << "[initialize_server] Server now listening on port " << m_service_port;
+}
+
+QString MainWindow::get_local_address()
+{
+  foreach (const QHostAddress &address, QNetworkInterface::allAddresses()) {
+    if (address.protocol() == QAbstractSocket::IPv4Protocol && address != QHostAddress(QHostAddress::LocalHost))
+      return address.toString();
+  }
+  qDebug() << "[get_local_address] Could not determine local address";
+  return QString("127.0.0.1");
+}
+
+void MainWindow::add_new_external_transfer_request(TransferRequest req)
+{
+  m_external_transfer_requests.append(req);
+  // TODO: update UI
+}
+
+void MainWindow::add_new_my_transfer_request(TransferRequest req)
+{
+  m_my_transfer_requests.append(req);
+}
+
+void MainWindow::process_new_connection() // SLOT
+{
+  if (m_service_server.hasPendingConnections() == false)
+      return;
+
+  auto new_connection_socket = m_service_server.nextPendingConnection();
+  new_connection_socket->setProperty("state", "not_processed");
+
+  // Process the connection
+  connect(new_connection_socket, SIGNAL(readyRead()), this, SLOT(server_ready_read()));
+  connect(new_connection_socket, SIGNAL(error(QAbstractSocket::SocketError)),
+          this, SLOT(server_socket_error(QAbstractSocket::SocketError)));
+  connect(new_connection_socket, &QAbstractSocket::disconnected,
+          new_connection_socket, &QObject::deleteLater);
+}
+
+void MainWindow::server_ready_read() // SLOT
+{
+  QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
+  auto state = socket->property("state").toString();
+
+  auto read_transfer_request = [](QTcpSocket *socket, TransferRequest& fill) {
+    QDataStream read_stream(socket);
+    read_stream.setVersion(QDataStream::Qt_5_7);
+    read_stream.startTransaction();
+    read_stream >> fill.m_unique_id >> fill.m_file_path >> fill.m_size >>
+                   fill.m_sender_address >> fill.m_sender_transfer_port;
+    if (!read_stream.commitTransaction())
+    {
+      read_stream.rollbackTransaction();
+      return false; // Wait for more data
+    }
+    return true;
+  };
+
+  if (state == "not_processed")
+  {
+    QString command;
+    QDataStream read_stream(socket);
+    read_stream.setVersion(QDataStream::Qt_5_7);
+    read_stream.startTransaction();
+    read_stream >> command;
+    if (!read_stream.commitTransaction())
+    {
+      read_stream.rollbackTransaction();
+      return; // Wait for more data
+    }
+
+    // TODO: command ping
+
+    if (command == "FILE")
+    {
+      socket->setProperty("state", "sending_transfer_request");
+      TransferRequest temp;
+      if(!read_transfer_request(socket, temp))
+        return; // Wait for more data
+      add_new_external_transfer_request(temp);
+      socket->disconnectFromHost();
+    }
+  }
+  else if (state == "sending_transfer_request")
+  {
+    TransferRequest temp;
+    if(!read_transfer_request(socket, temp))
+      return; // Wait for more data
+    add_new_external_transfer_request(temp);
+    socket->disconnectFromHost();
+  }
+}
+
+void MainWindow::server_socket_error(QAbstractSocket::SocketError err) // SLOT
+{
+  QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
+  qDebug() << "[server_socket_error] Error: " << err;
+  socket->abort();
+}
+
+void MainWindow::service_socket_connected() // SLOT
+{
+  TransferRequest req = TransferRequest::generate_unique();
+  req.m_file_path = "C:/Users/Alex/Desktop/car.mpg";
+  req.m_size = 6277450;
+  req.m_sender_address = get_local_address();
+  req.m_sender_transfer_port = m_transfer_port;
+  QByteArray block;
+  QDataStream out(&block, QIODevice::WriteOnly);
+  out.setVersion(QDataStream::Qt_5_7);
+  out << QString("FILE") << req.m_unique_id << req.m_file_path << req.m_size
+      << req.m_sender_address << req.m_sender_transfer_port;
+  m_service_socket.write(block);
+}
+
+void MainWindow::service_socket_read_ready() // SLOT
+{
+
+}
+
+void MainWindow::service_socket_error(QAbstractSocket::SocketError err) // SLOT
+{
+  QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
+  qDebug() << "[server_socket_error] Error: " << err;
+  socket->abort();
+}
+
+void MainWindow::SIMULATE_SEND(bool) // SLOT DEBUG
+{
+  // GRAB FIRST ONE
+  auto first = m_peers.front();
+
+  QString ip, hostname; int service_port, transfer_port;
+  std::tie(ip, service_port, transfer_port, hostname) = first;
+
+  connect(&m_service_socket, SIGNAL(connected()), this, SLOT(service_socket_connected()));
+  connect(&m_service_socket, SIGNAL(readyRead()), this, SLOT(service_socket_read_ready()));
+  connect(&m_service_socket, SIGNAL(error(QAbstractSocket::SocketError)),
+          this, SLOT(service_socket_error(QAbstractSocket::SocketError)), Qt::DirectConnection);
+
+  m_service_socket.abort();
+  m_service_socket.connectToHost(ip, service_port);
 }
