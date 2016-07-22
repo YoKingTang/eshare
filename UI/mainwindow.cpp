@@ -1,7 +1,8 @@
 #include <UI/MainWindow.h>
-#include "ui_mainwindow.h"
+#include <ui_mainwindow.h>
+#include <UI/DynamicTreeWidgetItem.h>
+#include <UI/DynamicTreeWidgetItemDelegate.h>
 #include <QTreeWidget>
-#include <QItemDelegate>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -19,59 +20,6 @@
 #include <QNetworkInterface>
 
 #include <iostream> // DEBUG
-
-// TransfersView is the tree widget which lists all of the ongoing file transfers
-class TransfersView : public QTreeWidget
-{
-
-public:
-    TransfersView(QWidget*) {}
-};
-
-// TransfersViewDelegate is used to draw the progress bars
-class TransfersViewDelegate : public QItemDelegate
-{
-
-public:
-    inline TransfersViewDelegate(MainWindow *mainWindow, bool sentView = true) :
-      m_sentView(sentView),
-      m_mainWindow(mainWindow),
-      QItemDelegate(mainWindow) {}
-
-    void paint(QPainter *painter, const QStyleOptionViewItem &option,
-               const QModelIndex &index ) const Q_DECL_OVERRIDE
-    {
-        if (index.column() != 0) {
-            QItemDelegate::paint(painter, option, index);
-            return;
-        }
-
-        // Set up a QStyleOptionProgressBar to precisely mimic the
-        // environment of a progress bar
-        QStyleOptionProgressBar progressBarOption;
-        progressBarOption.state = QStyle::State_Enabled;
-        progressBarOption.direction = QApplication::layoutDirection();
-        progressBarOption.rect = option.rect;
-        progressBarOption.fontMetrics = QApplication::fontMetrics();
-        progressBarOption.minimum = 0;
-        progressBarOption.maximum = 100;
-        progressBarOption.textAlignment = Qt::AlignCenter;
-        progressBarOption.textVisible = true;
-
-        // Set the progress and text values of the style option
-        //int progress = m_mainWindow->getPercentageForViewItem (m_sentView, index.row());
-        int progress = index.model()->data(index, Qt::UserRole /* Progressbar value */).toInt();
-        progressBarOption.progress = progress < 0 ? 0 : progress;
-        progressBarOption.text = QString::asprintf("%d%%", progressBarOption.progress);
-
-        // Draw the progress bar onto the view
-        QApplication::style()->drawControl(QStyle::CE_ProgressBar, &progressBarOption, painter);
-    }
-private:
-    bool m_sentView = true;
-    MainWindow *m_mainWindow = nullptr;
-};
-
 
 MainWindow::MainWindow(QWidget *parent) :
     QMainWindow(parent),
@@ -96,13 +44,16 @@ MainWindow::MainWindow(QWidget *parent) :
 
       QGroupBox *sentGB = new QGroupBox("Files inviati", this);
       {
-          m_sentView = new TransfersView(this);
+          m_sentView = new TransferTreeView(this);
 
           QStringList headers;
           headers << tr("Progresso") << tr("Destinatario") << tr("File");
 
           // Main transfers list
-          m_sentView->setItemDelegate(new TransfersViewDelegate(this));
+          auto delegate = new DynamicTreeWidgetItemDelegate(this);
+          connect(delegate, SIGNAL(needsUpdate(const QModelIndex&)), m_sentView, SLOT(update(const QModelIndex&)));
+          connect(delegate, SIGNAL(clicked(const QModelIndex)), m_sentView, SLOT(clicked(const QModelIndex)));
+          m_sentView->setItemDelegate(delegate);
           m_sentView->setHeaderLabels(headers);
           m_sentView->setSelectionBehavior(QAbstractItemView::SelectRows);
           m_sentView->setAlternatingRowColors(true);
@@ -116,13 +67,13 @@ MainWindow::MainWindow(QWidget *parent) :
 
       QGroupBox *receivedGB = new QGroupBox("Files ricevuti", this);
       {
-          m_receivedView = new TransfersView(this);
+          m_receivedView = new TransferTreeView(this);
 
           QStringList headers;
           headers << tr("Progresso") << tr("Mittente") << tr("Destinazione");
 
           // Main transfers list
-          m_receivedView->setItemDelegate(new TransfersViewDelegate(this));
+
           m_receivedView->setHeaderLabels(headers);
           m_receivedView->setSelectionBehavior(QAbstractItemView::SelectRows);
           m_receivedView->setAlternatingRowColors(true);
@@ -336,7 +287,19 @@ QString MainWindow::get_local_address()
 void MainWindow::add_new_external_transfer_request(TransferRequest req)
 {
   m_external_transfer_requests.append(req);
-  // TODO: update UI
+
+  DynamicTreeWidgetItem *item = new DynamicTreeWidgetItem(m_receivedView);
+
+  item->setData(0, Qt::UserRole + 0, true); // Start with accept button
+
+  // item->setText(0, "0"); // Progress styled by delegate
+  item->setText(1, req.m_sender_address); // Sender
+  QString destinationFile = req.m_file_path;
+  item->setText(2, destinationFile); // Destination (local file written)
+
+  item->setFlags(item->flags() & ~Qt::ItemIsEditable);
+  item->setTextAlignment(1, Qt::AlignHCenter);
+
 }
 
 void MainWindow::add_new_my_transfer_request(TransferRequest req)

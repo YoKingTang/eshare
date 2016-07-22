@@ -2,8 +2,8 @@
 #define MAINWINDOW_H
 
 #include <Data/TransferRequest.h>
+#include <UI/TransferTreeView.h>
 #include <QMainWindow>
-#include <QTreeWidget>
 #include <QMutex>
 #include <QVector>
 #include <QTcpServer>
@@ -33,8 +33,8 @@ protected:
 private:
     Ui::MainWindow *ui;
 
-    TransfersView *m_sentView;
-    TransfersView *m_receivedView;
+    TransferTreeView *m_sentView;
+    TransferTreeView *m_receivedView;
     QTreeWidget *m_peersView;
 
     void read_peers_from_file();
