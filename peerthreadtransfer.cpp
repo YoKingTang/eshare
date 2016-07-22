@@ -26,10 +26,12 @@ void PeerThreadTransfer::run() // This function will run in a different thread!
   if (m_type == CLIENT) {
     transfer = std::make_unique<PeerFileTransfer>(this, m_mainWindow, m_peerIndex, m_peer, m_fileOrDownloadPath);
     connect(transfer.get(), SIGNAL(fileSentPercentage(int)), this, SLOT(filePercentageSlot(int)), ctype);
+    connect(transfer.get(), SIGNAL(sendingComplete()), this, SLOT(transferCompleteSlot()), ctype);
   } else { // SERVER
     transfer = std::make_unique<PeerFileTransfer>(this, m_mainWindow, m_peerIndex, m_peer, m_socketDescriptor, m_fileOrDownloadPath);
     connect(transfer.get(), SIGNAL(fileReceivedPercentage(int)), this, SLOT(filePercentageSlot(int)), ctype);
     connect(transfer.get(), SIGNAL(destinationAvailable(QString)), this, SLOT(destinationAvailableSlot(QString)), ctype);
+    connect(transfer.get(), SIGNAL(receivingComplete()), this, SLOT(transferCompleteSlot()), ctype);
   }
 
   //
@@ -39,6 +41,11 @@ void PeerThreadTransfer::run() // This function will run in a different thread!
   transfer->execute();
 
   exec(); // Start thread event loop and keep PeerFileTransfer alive
+}
+
+void PeerThreadTransfer::transferCompleteSlot() // Forwarding SLOT
+{
+  emit transferComplete();
 }
 
 void PeerThreadTransfer::filePercentageSlot(int value) // Forwarding SLOT

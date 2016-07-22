@@ -20,7 +20,7 @@ public:
 private:
   friend class MainWindow; // Only authorized classes can run this
 
-  void run() Q_DECL_OVERRIDE;  
+  void run() Q_DECL_OVERRIDE;
 
   TransferType m_type;
   MainWindow *m_mainWindow = nullptr;
@@ -30,12 +30,14 @@ private:
   qintptr m_socketDescriptor;
 
 private slots:
+  void transferCompleteSlot();
   void filePercentageSlot(int value);
   void destinationAvailableSlot(QString destination);
 
 signals:
   void filePercentage(int value);
   void destinationAvailable(QString destination);
+  void transferComplete();
 };
 
 #endif // PEERTHREADTRANSFER_H

@@ -21,35 +21,6 @@
 
 #include <iostream> // DEBUG
 
-
-//QString addr, hostname; int port;
-//std::tie(addr, port, hostname) = transfer.getPeer();
-//item->setText(1, hostname); // Receiver
-//QString localFile = transfer.getClientSourceFilePath();
-//if (localFile.isEmpty())
-//  localFile = "[N/A]"; // Should never happen
-//item->setText(2, localFile); // Source file (local file that we're sending)
-
-//void socketFailure();
-//void timeout();
-//void transferDenied();
-//void fileLocked();
-//void fileSentPercentage(int);
-
-//void receivingComplete();
-//void fileReceivedPercentage(int);
-
-//QString addr, hostname; int port;
-//std::tie(addr, port, hostname) = transfer.getPeer();
-//item->setText(1, hostname); // Sender
-//QString destinationFile = transfer.getServerDestinationFilePath();
-//if (destinationFile.isEmpty())
-//  destinationFile = "[N/A]";
-//item->setText(2, destinationFile); // Destination (local file written)
-
-//item->setFlags(item->flags() & ~Qt::ItemIsEditable);
-//item->setTextAlignment(1, Qt::AlignHCenter);
-
 // TransfersView is the tree widget which lists all of the ongoing file transfers
 class TransfersView : public QTreeWidget
 {
@@ -562,11 +533,11 @@ void MainWindow::updateServerProgress() // SLOT
                                                                               m_defaultDownloadPath,
                                                                               socket->socketDescriptor())); // Server version
           // Delete the original socket when the thread is done (security measure to prevent socket descriptor thrashing)
-          // connect(m_transferThreads.back().get(), SIGNAL(finished()), socket, SLOT(deleteLater()));
+          connect(m_transferThreads.back().get(), SIGNAL(finished()), this, SLOT(cleanupThread()));
 
           addTransferToAppropriateView(*m_transferThreads.back());
 
-          m_transferThreads.back()->moveToThread(m_transferThreads.back().get()); // Relinquish ownership of this object to the new thread (including slots)
+          //m_transferThreads.back()->moveToThread(m_transferThreads.back().get()); // Relinquish ownership of this object to the new thread (including slots)
           m_transferThreads.back()->start(); // Start the transfer
 
         } else {
@@ -600,6 +571,18 @@ void MainWindow::serverSocketError(QAbstractSocket::SocketError) // SLOT
   m_tcpServerConnections.remove(socket);
   connect(socket, &QAbstractSocket::disconnected,
           socket, &QObject::deleteLater); // Mark for deletion as soon as disconnected
+}
+
+void MainWindow::cleanupThread() // SLOT
+{
+  // Cleanup transfer
+  PeerThreadTransfer* ptt = qobject_cast<PeerThreadTransfer*>(sender());
+  for (size_t i = 0; i < m_transferThreads.size(); ++i) {
+    if (m_transferThreads[i].get() == ptt) {
+      m_transferThreads.erase(m_transferThreads.begin() + i);
+      break;
+    }
+  }
 }
 
 QString MainWindow::getDownloadPath() const {
@@ -685,9 +668,11 @@ void MainWindow::processSendFiles(const QStringList files) {
     m_transferThreads.emplace_back(std::make_unique<PeerThreadTransfer>(CLIENT, this, index, m_peers[index],
                                                                         file, 0 /* socket descriptor not needed */)); // Client version
 
+    connect(m_transferThreads.back().get(), SIGNAL(finished()), this, SLOT(cleanupThread()));
+
     addTransferToAppropriateView(*m_transferThreads.back());
 
-    m_transferThreads.back()->moveToThread(m_transferThreads.back().get()); // Relinquish ownership of this object to the new thread (including slots)
+    //m_transferThreads.back()->moveToThread(m_transferThreads.back().get()); // Relinquish ownership of this object to the new thread (including slots)
     m_transferThreads.back()->start(); // Start the transfer
   }
 }

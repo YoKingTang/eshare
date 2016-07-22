@@ -99,6 +99,8 @@ private slots:
     void updateServerProgress();
     void serverSocketError(QAbstractSocket::SocketError);
 
+    void cleanupThread();
+
 private:
     QString m_defaultDownloadPath;
 public:

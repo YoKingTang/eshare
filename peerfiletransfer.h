@@ -113,13 +113,16 @@ signals:
   void timeout();
   void transferDenied();
   void fileLocked();
+
   void fileSentPercentage(int);
+  void sendingComplete();
   void serverPeerWentOffline();
 
   void receivingComplete();
   void fileReceivedPercentage(int);
   // Destination filename has been received from header and downloadpath
   void destinationAvailable(QString destination);  
+
 
 public:
   // Getters and status queries

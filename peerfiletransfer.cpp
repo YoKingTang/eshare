@@ -55,7 +55,6 @@ PeerFileTransfer::PeerFileTransfer(QThread *parent, MainWindow *mainWindow, size
                                                           // and assign the socket descriptor from the native socket
     qDebug() << "[SERVER ERROR] COULD NOT ASSIGN SOCKET DESCRIPTOR";
   }
-  m_socket->disconnect();
   m_type = SERVER;
   qRegisterMetaType<QAbstractSocket::SocketError>();
   Qt::ConnectionType ctype = static_cast<Qt::ConnectionType>(Qt::UniqueConnection | Qt::QueuedConnection);
@@ -132,8 +131,10 @@ void PeerFileTransfer::clientReadReady() // SLOT
   QDataStream clientReadStream(m_socket.get());
   clientReadStream.startTransaction();
   clientReadStream >> command;
-  if (!clientReadStream.commitTransaction())
+  if (!clientReadStream.commitTransaction()) {
+    clientReadStream.rollbackTransaction();
     return; // Wait for more data
+  }
 
   if(m_clientState == UNAUTHORIZED) {
     // Ready to read the response
@@ -188,12 +189,16 @@ void PeerFileTransfer::clientReadReady() // SLOT
           m_socket->disconnectFromHost();
 
           qDebug() << "{" << TRANSFER_NUMBER << "} " << "[CLIENT] '" << m_file << "' >> TRANSFER SUCCESSFUL!!! <<";
+          emit sendingComplete();
+
           m_parentThread->exit(0); // Exit the thread event loop
           return;
-        }
+        } else
+          sendData(); // Continue sending
 
-        sendData(); // Continue sending
-
+      } break;
+      default: {
+        qDebug() << "{" << TRANSFER_NUMBER << "} " << "[CLIENT] WARNING - Unrecognized client state when dealing with clientReadReady()";
       } break;
     };
 
@@ -255,6 +260,9 @@ void PeerFileTransfer::sendData() {
         m_allChunksSent = true;
 
     } break;
+    default: {
+      qDebug() << "{" << TRANSFER_NUMBER << "} " << "[CLIENT] WARNING - Unrecognized client state when dealing with sendData()";
+    } break;
   };
 }
 
@@ -270,8 +278,8 @@ void PeerFileTransfer::updateClientProgress(qint64 bytesWritten) // SLOT
 
 void PeerFileTransfer::error(QAbstractSocket::SocketError err) // SLOT
 {
-  // Get the operation the socket requested
-  //auto state = *static_cast<ClientSocketState*>(m_socket->property("command").data());
+  if (m_type == CLIENT && m_allChunksSent && m_lastChunkAcknowledged && err == QAbstractSocket::RemoteHostClosedError)
+    return; // Expected
 
   qDebug() << "{" << TRANSFER_NUMBER << "} " << ">> FAILED TRANSFER FOR FILE [" << m_file << "]" << err << "!!!";
   m_socket->abort();
@@ -315,8 +323,10 @@ void PeerFileTransfer::updateServerProgress() // SLOT
         QDataStream clientReadStream(m_socket.get());
         clientReadStream.startTransaction();
         clientReadStream >> m_fileHeader.filePath >> m_fileHeader.fileSize;
-        if (!clientReadStream.commitTransaction())
+        if (!clientReadStream.commitTransaction()) {
+          clientReadStream.rollbackTransaction();
           return; // Wait for more data
+        }
 
         { // Setup chunking
           m_bytesToRead = m_fileHeader.fileSize;
@@ -383,7 +393,7 @@ void PeerFileTransfer::updateServerProgress() // SLOT
         qDebug() << "{" << TRANSFER_NUMBER << "} " << "[SERVER] Reading chunk of size " << chunk.size() << " [" << m_completionPercentage << "%]";
 
         // Acknowledge this chunk
-        QString command = QString(PeerFileTransfer::ACK_CHUNK);
+        QString command = QString(ACK_CHUNK);
         QByteArray block;
         QDataStream out(&block, QIODevice::WriteOnly);
         out.setVersion(QDataStream::Qt_5_7);
@@ -399,12 +409,16 @@ void PeerFileTransfer::updateServerProgress() // SLOT
 
           qDebug() << "{" << TRANSFER_NUMBER << "} " << "[SERVER] >> FILE SUCCESSFULLY RECEIVED! <<";
           m_serverState = RECEIVING_FINISHED;
+          m_socket->flush();
           m_socket->disconnectFromHost();
           emit receivingComplete();
           m_parentThread->exit(0); // Exit the thread event loop
           return;
         }
 
+      } break;
+      default: {
+        qDebug() << "{" << TRANSFER_NUMBER << "} " << "[CLIENT] WARNING - Unrecognized server state when dealing with updateServerProgress()";
       } break;
     };
   }
