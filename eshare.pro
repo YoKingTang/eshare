@@ -12,20 +12,10 @@ TEMPLATE = app
 
 SOURCES +=  main.cpp\
             mainwindow.cpp \
-            pickreceiver.cpp \
-    peerfiletransfer.cpp \
-    filechunker.cpp \
-    dynamictreewidgetitem.cpp \
-    peerthreadtransfer.cpp \
-    socketrecycler.cpp
+    filechunker.cpp
 
 HEADERS  += mainwindow.h \
-            pickreceiver.h \
-    peerfiletransfer.h \
-    filechunker.h \
-    dynamictreewidgetitem.h \
-    peerthreadtransfer.h \
-    socketrecycler.h
+    filechunker.h
 
 FORMS    += mainwindow.ui \
             pickreceiver.ui

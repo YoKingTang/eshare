@@ -1,7 +1,5 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
-#include "pickreceiver.h"
-#include "dynamictreewidgetitem.h"
 #include <QTreeWidget>
 #include <QItemDelegate>
 #include <QGroupBox>
@@ -73,8 +71,6 @@ private:
     MainWindow *m_mainWindow = nullptr;
 };
 
-const char MainWindow::PING[] = "PING?";
-const char MainWindow::PONG[] = "PONG!";
 
 MainWindow::MainWindow(QWidget *parent) :
     QMainWindow(parent),
@@ -173,73 +169,15 @@ MainWindow::MainWindow(QWidget *parent) :
 
     // Continue initialization
 
-    m_defaultDownloadPath = QDir::currentPath();
+    //m_defaultDownloadPath = QDir::currentPath();
 
-    initializePeers();
-    initializeServer();
+    initialize_peers();
+    initialize_server();
 }
 
-MainWindow::~MainWindow() {
-  if (m_peersPingTimer)
-    m_peersPingTimer->stop();
+MainWindow::~MainWindow()
+{
   delete ui;
-}
-
-void MainWindow::initializePeers() {
-  // Load peers and other settings from configuration files
-  readPeersListAndSettings();
-
-  // Process every peer found
-  size_t index = 0;
-  for(auto& tuple : m_peers) {
-    QString ip, hostname; int port;
-    std::tie(ip, port, hostname) = tuple; // Unpack peer data
-
-    QTreeWidgetItem *item = new QTreeWidgetItem(m_peersView);
-    item->setText(1, hostname);
-    item->setTextAlignment(1, Qt::AlignLeft);
-    item->setIcon(0, QIcon(":res/red_light.png"));
-
-    // Create client socket and link the signals
-    m_peersClientPingSockets.emplace_back(std::make_unique<QTcpSocket>());
-    connect(m_peersClientPingSockets.back().get(), SIGNAL(connected()), this, SLOT(socketConnected()), Qt::DirectConnection);
-    connect(m_peersClientPingSockets.back().get(), SIGNAL(readyRead()), this, SLOT(updateClientProgress()), Qt::DirectConnection);
-    connect(m_peersClientPingSockets.back().get(), SIGNAL(error(QAbstractSocket::SocketError)),
-            this, SLOT(socketError(QAbstractSocket::SocketError)), Qt::DirectConnection);
-
-    m_peersClientPingSockets.back()->setProperty("peer_index", index);
-    m_peersClientPingSockets.back()->setProperty("command", PingClientSocketState::DONE);
-
-    // Add this peer to the list of authorized and registered ones
-    m_registeredPeers.insert(ip, index);
-
-    // Mark it offline
-    m_isPeerOnline.emplace_back(false);
-
-    // Generate autocompletion list from peers' data
-    m_peersCompletionList.append(hostname);
-
-    ++index;
-  }
-
-
-  // Ping all peers asynchronously at regular intervals while this window is on
-  m_peersPingTimer = std::make_unique<QTimer>(this);
-  connect(m_peersPingTimer.get(), SIGNAL(timeout()), this, SLOT(pingAllPeers()));
-  m_peersPingTimer->start(5000);
-}
-
-void MainWindow::initializeServer() {
-  if (!m_tcpServer.listen(QHostAddress::LocalHost, m_localPort)) {
-    QMessageBox::critical(this, tr("Server"),
-                          tr("Errore durante l'inizializzazione del server: '%1'\n\nL'applicazione sara' chiusa.")
-                          .arg(m_tcpServer.errorString()));
-    exit(-1); // Cannot recover
-  }
-
-  connect(&m_tcpServer, SIGNAL(newConnection()), this, SLOT(acceptConnection()), Qt::DirectConnection);
-
-  qDebug() << "[initializeServer] Server now listening on port " << m_localPort;
 }
 
 namespace {
@@ -262,10 +200,12 @@ namespace {
   }
 }
 
-void MainWindow::readPeersListAndSettings() {
+void MainWindow::read_peers_from_file()
+{
   using namespace std;
   ifstream file("peers.cfg");
-  if (!file) {
+  if (!file)
+  {
     QMessageBox msgBox;
     msgBox.setIcon(QMessageBox::Warning);
     msgBox.setText("File di configurazione 'peers.cfg' mancante nella directory\n\n '" + QDir::currentPath() + "'\n\n"
@@ -282,7 +222,8 @@ void MainWindow::readPeersListAndSettings() {
 
   QStringList list;
   string line;
-  while(getline(file, line)) {
+  while(getline(file, line))
+  {
     if(line.empty())
       continue;
     size_t i = 0;
@@ -295,427 +236,77 @@ void MainWindow::readPeersListAndSettings() {
     ss >> property;
     ss >> string(); // Eat '='
 
-    if (property.compare("localport") == 0) {
-      ss >> m_localPort;
-    } else if (property.compare("peer") == 0) {
+    if (property.compare("local_ping_port") == 0)
+    {
+      ss >> m_ping_port;
+    }
+    else if (property.compare("local_transfer_port") == 0)
+    {
+      ss >> m_transfer_port;
+    }
+    else if (property.compare("peer") == 0)
+    {
       string addr;
-      int port = 66; // Default
+      int ping_port = 66; // Default
+      int transfer_port = 67; // Default
       ss >> addr;
-      auto s = addr.find('/');
-      if (s != addr.npos) {
-        port = stoi(addr.substr(s + 1));
-        addr.resize(s);
+      auto s1 = addr.find('/');
+      auto s2 = addr.find('/', s1 + 1);
+      if (s1 != addr.npos && s2 != addr.npos)
+      {
+        ping_port = stoi(addr.substr(s1 + 1, s2));
+        transfer_port = stoi(addr.substr(s2 + 1));
+        addr.resize(s1);
       }
       string hostname;
       getline(ss, hostname); // All the rest
       hostname = trim(hostname);
 
-      m_peers.emplace_back(QString::fromStdString(addr), port, QString::fromStdString(hostname));
-    } else if (property.compare("default_download_path") == 0) {
-      string downloadPath;
-      getline(ss, downloadPath); // All the rest
-      downloadPath = trim(downloadPath);
+      m_peers.emplace_back(QString::fromStdString(addr), ping_port, transfer_port, QString::fromStdString(hostname));
+    }
+    else if (property.compare("default_download_path") == 0)
+    {
+      string download_path;
+      getline(ss, download_path); // All the rest
+      download_path = trim(download_path);
 
-      auto path = QString::fromStdString(downloadPath);
+      auto path = QString::fromStdString(download_path);
 
-      if (QDir(path).exists() == false) {
+      if (QDir(path).exists() == false)
+      {
         QMessageBox::warning(this, "Path non valida", "Il percorso per il download specificato nel file di configurazione\n'"
                              + path + "'\n non esiste.\nVerra' utilizzato il percorso di default\n'"
-                             + m_defaultDownloadPath + "'");
-      } else
-        m_defaultDownloadPath = path;
+                             + m_default_download_path + "'");
+      }
+      else
+        m_default_download_path = path;
     }
   }
   file.close();
 }
 
-void MainWindow::pingAllPeers() { // SLOT
+void MainWindow::initialize_peers()
+{
+  // Load peers and other settings from configuration files
+  read_peers_from_file();
 
-  // qDebug() << "[TIMER ELAPSED - pingAllPeers] Trying to ping all peers";
-
+  // Process every peer found
   size_t index = 0;
-  for(auto& tuple : m_peers) {
-    // Try to connect to all peers for a ping
+  for(auto& tuple : m_peers)
+  {
+    QString ip, hostname; int ping_port, transfer_port;
+    std::tie(ip, ping_port, transfer_port, hostname) = tuple; // Unpack peer data
 
-    QString ip, hostname; int port;
-    std::tie(ip, port, hostname) = tuple; // Unpack peer data
-
-    QTcpSocket& socket = *m_peersClientPingSockets[index];
-
-    // Give other time to slow pings
-    auto state = *static_cast<PingClientSocketState*>(socket.property("command").data());
-    if (state == PingClientSocketState::DONE) {
-      socket.abort(); // Make sure no pending connections are left
-      socket.setProperty("command", PingClientSocketState::CONTACTED_HOST_FOR_PING);      
-      socket.connectToHost(ip, port);
-    }
+    QTreeWidgetItem *item = new QTreeWidgetItem(m_peersView);
+    item->setText(1, hostname);
+    item->setTextAlignment(1, Qt::AlignLeft);
+    item->setIcon(0, QIcon(":res/red_light.png"));
 
     ++index;
   }
 }
 
-void MainWindow::socketConnected() // SLOT
+void MainWindow::initialize_server()
 {
-  // Get the sender socket on this endpoint
-  QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
 
-  // Get the operation the socket requested and the endpoint it communicated with
-  auto state = *static_cast<PingClientSocketState*>(socket->property("command").data());
-  const int peerIndex = socket->property("peer_index").toInt();
-
-  switch(state) {
-    case CONTACTED_HOST_FOR_PING: {
-      socket->setProperty("command", PingClientSocketState::WAITING_FOR_PONG);
-      socket->write(PING, sizeof(PING)); // N.b. TCP/IP MTU over ethernet packet size ~ 1500 bytes
-      socket->flush();
-    } break;
-    default: {
-      // Unhandled state - error. Reset connection
-      qDebug() << "Unhandled state for a ping socket - resetting socket";
-      socket->abort();
-      socket->setProperty("command", PingClientSocketState::DONE);
-    }
-  }
-}
-
-void MainWindow::updateClientProgress() // SLOT
-{
-  // Get the sender socket on this endpoint
-  QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
-
-  // Get the operation the socket requested and the endpoint it communicated with
-  auto state = *static_cast<PingClientSocketState*>(socket->property("command").data());
-  const int peerIndex = socket->property("peer_index").toInt();
-  auto& peer = m_peers[peerIndex];
-
-
-  switch(state) {
-    case WAITING_FOR_PONG: {
-
-      QByteArray data = socket->readAll();
-      QString command = QString(data);
-
-      if(command.compare(PONG) == 0) {
-
-        // Ping finished
-        socket->setProperty("command", PingClientSocketState::DONE);
-        socket->disconnectFromHost();
-        auto item = m_peersView->topLevelItem(peerIndex);
-        item->setIcon(0, QIcon(":res/green_light.png"));
-        m_isPeerOnline[peerIndex] = true;
-        //qDebug() << "[updateClientProgress] Peer " << std::get<2>(peer) << " is alive 'n kicking";
-
-      } else {
-
-        // Ping failed
-        socket->setProperty("command", PingClientSocketState::DONE);
-        socket->disconnectFromHost();
-        auto item = m_peersView->topLevelItem(peerIndex);
-        item->setIcon(0, QIcon(":res/red_light.png"));
-        m_isPeerOnline[peerIndex] = false;
-        qDebug() << "[updateClientProgress] Peer " << std::get<2>(peer) << " failed its pong response";
-
-      }
-    } break;
-    default: {
-      // Unrecognized state - reset socket
-      qDebug() << "Unrecognized state for ping socket - resetting socket";
-      socket->abort();
-      socket->setProperty("command", PingClientSocketState::DONE);
-    }
-  }
-}
-
-void MainWindow::socketError(QAbstractSocket::SocketError) // SLOT
-{
-  // Get the sender socket on this endpoint
-  QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
-
-  // Get the operation the socket requested and the endpoint it communicated with
-  //auto state = *static_cast<PingClientSocketState*>(socket->property("command").data());
-  //const int peerIndex = socket->property("peer_index").toInt();
-  //auto& peer = m_peers[peerIndex];
-
-  int peerIndex = socket->property("peer_index").toInt();
-  auto item = m_peersView->topLevelItem(peerIndex);
-  item->setIcon(0, QIcon(":res/red_light.png"));
-  m_isPeerOnline[peerIndex] = false;
-  socket->abort();
-  socket->setProperty("command", PingClientSocketState::DONE);
-  //qDebug() << "[socketError] Peer " << std::get<2>(peer) << " is NOT alive";
-
-
-}
-
-void MainWindow::acceptConnection() // SLOT
-{
-  if (m_tcpServer.hasPendingConnections() == false)
-    return;
-
-  auto newSocketConnection = m_tcpServer.nextPendingConnection();
-  if (m_tcpServerConnections.find(newSocketConnection) != m_tcpServerConnections.end())
-    return; // This connection is already being processed
-
-  newSocketConnection->setProperty("command", ListeningServerSocketState::IDLE);
-  m_tcpServerConnections.insert(newSocketConnection);
-
-  QString addr = newSocketConnection->peerAddress().toString();
-  //int port = newSocketConnection->peerPort();
-
-  // Check that this is a registered peer, otherwise refuse the connection
-  {
-    auto it = m_registeredPeers.find(addr);
-    if (it == m_registeredPeers.end()) {
-      // Not registered/authorized
-      newSocketConnection->abort();
-      m_tcpServerConnections.remove(newSocketConnection);
-      return;
-    }
-    newSocketConnection->setProperty("peer_index", it.value());
-  }
-
-  // Process the connection
-  connect(newSocketConnection, SIGNAL(readyRead()),
-          this, SLOT(updateServerProgress()), Qt::DirectConnection);
-  connect(newSocketConnection, SIGNAL(error(QAbstractSocket::SocketError)),
-          this, SLOT(serverSocketError(QAbstractSocket::SocketError)), Qt::DirectConnection);
-
-//  serverStatusLabel->setText(tr("Accepted connection"));
-
-  //qDebug() << "[SERVER] Accepted connection from " << addr << "/" << port;
-}
-
-void MainWindow::updateServerProgress() // SLOT
-{
-  // Get the sender socket on this endpoint
-  QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
-  // Get our client socket state
-  auto state = *static_cast<ListeningServerSocketState*>(socket->property("command").data());
-
-  // int bytesReceived = (int)socket->bytesAvailable();
-  QByteArray data = socket->readAll();
-
-  // Interpret client request
-  switch(state) {
-    case IDLE: {
-      // Interpret this bulk data as a command
-      QString command = QString(data);
-
-      if(command.compare(PING) == 0) {
-
-        // Answer with "PONG!" and close 
-        socket->write(PONG, sizeof(PONG));
-        socket->flush();
-        socket->disconnectFromHost();
-        connect(socket, &QAbstractSocket::disconnected,
-                socket, &QObject::deleteLater); // Mark for deletion as soon as disconnected
-        m_tcpServerConnections.remove(socket);
-
-      } else if (command.compare(REQUEST_SEND_PERMISSION) == 0) {
-
-        qDebug() << "[SERVER] Received REQUEST_SEND_PERMISSION (" << data.size() << " bytes), acknowledging";
-
-        // Permission to start transfer -> ask the user or do as instructed
-        //DEBUG - ALWAYS TRUE
-        const bool permission = true;
-
-        if(permission) {
-
-          // Start transfer
-          qDebug() << "[SERVER] Transmission Acknowledged - Start transfer";
-
-          // Disconnect all signals from this socket, the PeerFileTransfer class will
-          // handle them anyway from this point onward with another socket.
-          socket->disconnect();
-
-          size_t peerIndex = socket->property("peer_index").toULongLong();
-          m_transferThreads.emplace_back(std::make_unique<PeerThreadTransfer>(SERVER, this, peerIndex, m_peers[peerIndex],
-                                                                              m_defaultDownloadPath,
-                                                                              socket->socketDescriptor())); // Server version
-          // Delete the original socket when the thread is done (security measure to prevent socket descriptor thrashing)
-          connect(m_transferThreads.back().get(), SIGNAL(finished()), this, SLOT(cleanupThread()));
-
-          addTransferToAppropriateView(*m_transferThreads.back());
-
-          //m_transferThreads.back()->moveToThread(m_transferThreads.back().get()); // Relinquish ownership of this object to the new thread (including slots)
-          m_transferThreads.back()->start(); // Start the transfer
-
-        } else {
-          qDebug() << "[SERVER] Denying transfer request - sending NACK_SEND_PERMISSION";
-
-          QString command = QString(NACK_SEND_PERMISSION);
-          QByteArray block;
-          QDataStream out(&block, QIODevice::WriteOnly);
-          out.setVersion(QDataStream::Qt_5_7);
-          out << command;
-          socket->write(block);
-          socket->disconnectFromHost();
-          connect(socket, &QAbstractSocket::disconnected,
-                  socket, &QObject::deleteLater); // Mark for deletion as soon as disconnected
-          m_tcpServerConnections.remove(socket);
-        }
-
-      }
-    }
-  }
-
-
-}
-
-void MainWindow::serverSocketError(QAbstractSocket::SocketError) // SLOT
-{
-  // Get the sender socket on this endpoint
-  QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
-  qDebug() << "[ERROR - serverSocketError] Unexpected error while communicating with client";
-  socket->abort();
-  m_tcpServerConnections.remove(socket);
-  connect(socket, &QAbstractSocket::disconnected,
-          socket, &QObject::deleteLater); // Mark for deletion as soon as disconnected
-}
-
-void MainWindow::cleanupThread() // SLOT
-{
-  // Cleanup transfer
-  PeerThreadTransfer* ptt = qobject_cast<PeerThreadTransfer*>(sender());
-  for (size_t i = 0; i < m_transferThreads.size(); ++i) {
-    if (m_transferThreads[i].get() == ptt) {
-      m_transferThreads.erase(m_transferThreads.begin() + i);
-      break;
-    }
-  }
-}
-
-QString MainWindow::getDownloadPath() const {
-  return m_defaultDownloadPath;
-}
-
-//bool MainWindow::isPeerAlive(QString ip, int port) {
-//  m_tcpClient.connectToHost(ip, port);
-//  m_tcpClient.setProperty()
-//  return true;
-//}
-
-//// Returns the job at a given row
-//const TransferClient *MainWindow::jobForRow(int row) const
-//{
-//    // Return the client at the given row.
-//    return jobs.at(row).client;
-//}
-
-void MainWindow::dragEnterEvent(QDragEnterEvent *event) {
-  // Accept any file
-  QUrl url(event->mimeData()->text());
-  if (url.isValid() && url.scheme().toLower() == "file")
-    event->accept();
-}
-
-void MainWindow::dragMoveEvent(QDragMoveEvent *event) {
-  // Accept any file
-  QUrl url(event->mimeData()->text());
-  if (url.isValid() && url.scheme().toLower() == "file")
-    event->acceptProposedAction();
-}
-
-void MainWindow::dropEvent(QDropEvent *event) {
-  // Accept any drop if they exist
-
-  const QMimeData* mimeData = event->mimeData();
-
-  // check for our needed mime type, here a file or a list of files
-  if (mimeData->hasUrls()) {
-    QStringList pathList;
-    QList<QUrl> urlList = mimeData->urls();
-
-    // Get local paths and check for existence
-    for (int i = 0; i < urlList.size(); ++i) {
-      QString filepath = urlList.at(i).toLocalFile();
-      if (!QFile::exists(filepath)) {
-        QMessageBox::warning(this, "File non trovato", "File inaccessibile o inesistente:\n\n'"
-                             + filepath + "'\n\nOperazione annullata.");
-        return;
-      }
-      pathList.append(filepath);
-    }
-
-    // Bulk ready, get the receiver and start the transfer
-    processSendFiles(pathList);
-  }
-}
-
-void MainWindow::processSendFiles(const QStringList files) {
-  // Prompt for a receiver with a word list based on all host names
-  PickReceiver dialog(m_peersCompletionList, this);
-  auto dialogResult = dialog.exec();
-  if (dialogResult != QDialog::DialogCode::Accepted)
-    return;
-
-  int index = dialog.getSelectedItem();
-
-  if (index == -1 || index >= m_peers.size()) {
-    QMessageBox::warning(this, "Selezione non valida", "Peer non valido.");
-    return;
-  }
-
-  if (m_isPeerOnline[index] == false) {
-    QMessageBox::warning(this, "Peer offline", "Impossibile iniziare un trasferimento con un peer offline.\n"
-                         "Controllare la connessione, i cavi di rete e che le porte su eventuali firewall siano aperte.");
-    return;
-  }
-
-  // >> Initiate transfer with peer <<
-
-  for(auto& file : files) {
-    m_transferThreads.emplace_back(std::make_unique<PeerThreadTransfer>(CLIENT, this, index, m_peers[index],
-                                                                        file, 0 /* socket descriptor not needed */)); // Client version
-
-    connect(m_transferThreads.back().get(), SIGNAL(finished()), this, SLOT(cleanupThread()));
-
-    addTransferToAppropriateView(*m_transferThreads.back());
-
-    //m_transferThreads.back()->moveToThread(m_transferThreads.back().get()); // Relinquish ownership of this object to the new thread (including slots)
-    m_transferThreads.back()->start(); // Start the transfer
-  }
-}
-
-void MainWindow::addTransferToAppropriateView(PeerThreadTransfer& transferThread) {
-  // Add the transfer to the appropriate view (incoming or outgoing)
-  if (transferThread.m_type == SERVER) {
-
-    // This endpoint is receiving a file
-
-    DynamicTreeWidgetItem *item = new DynamicTreeWidgetItem(m_receivedView);
-
-    // item->setText(0, "0"); // Progress styled by delegate
-    QString addr, hostname; int port;
-    std::tie(addr, port, hostname) = transferThread.m_peer;
-    item->setText(1, hostname); // Sender
-    QString destinationFile = "[N/A]";
-    item->setText(2, destinationFile); // Destination (local file written)
-
-    item->setFlags(item->flags() & ~Qt::ItemIsEditable);
-    item->setTextAlignment(1, Qt::AlignHCenter);
-
-    // Link update signals and slots
-    connect(&transferThread, SIGNAL(filePercentage(int)), item, SLOT(filePercentage(int)));
-    connect(&transferThread, SIGNAL(destinationAvailable(QString)), item, SLOT(destinationAvailable(QString)));
-
-  } else {
-
-    // This endpoint is sending a file
-
-    DynamicTreeWidgetItem *item = new DynamicTreeWidgetItem(m_sentView);
-
-    // item->setText(0, "0"); // Progress styled by delegate
-    QString addr, hostname; int port;
-    std::tie(addr, port, hostname) = transferThread.m_peer;
-    item->setText(1, hostname); // Receiver
-    QString localFile = transferThread.m_fileOrDownloadPath;
-    item->setText(2, localFile); // Source file (local file that we're sending)
-
-    item->setFlags(item->flags() & ~Qt::ItemIsEditable);
-    item->setTextAlignment(1, Qt::AlignHCenter);
-
-    // Link update signals and slots
-    connect(&transferThread, SIGNAL(filePercentage(int)), item, SLOT(filePercentage(int)));
-  }
 }
