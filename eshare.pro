@@ -11,19 +11,23 @@ TEMPLATE = app
 
 
 SOURCES +=  main.cpp \
-    Listener/RequestListener.cpp \
+    Listener/TransferListener.cpp \
     UI/MainWindow.cpp \
     UI/DynamicTreeWidgetItem.cpp \
     UI/DynamicTreeWidgetItemDelegate.cpp \
-    UI/TransferTreeView.cpp
+    UI/TransferTreeView.cpp \
+    Receiver/TransferStarter.cpp \
+    Chunker/Chunker.cpp
 
 HEADERS  += \
     Data/TransferRequest.h \
-    Listener/RequestListener.h \
+    Listener/TransferListener.h \
     UI/MainWindow.h \
     UI/DynamicTreeWidgetItem.h \
     UI/DynamicTreeWidgetItemDelegate.h \
-    UI/TransferTreeView.h
+    UI/TransferTreeView.h \
+    Receiver/TransferStarter.h \
+    Chunker/Chunker.h
 
 FORMS    += \
             UI/PickReceiver.ui \

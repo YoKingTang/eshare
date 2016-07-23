@@ -3,6 +3,7 @@
 
 #include <Data/TransferRequest.h>
 #include <UI/TransferTreeView.h>
+#include <Listener/TransferListener.h>
 #include <QMainWindow>
 #include <QMutex>
 #include <QVector>
@@ -39,7 +40,7 @@ private:
 
     void read_peers_from_file();
     void initialize_peers();
-    void initialize_server();
+    void initialize_servers();
 
     // ~-~-~-~-~-~-~-~- Local configuration data ~-~-~-~-~-~-~-~-~-~-
     int m_service_port = 66; // Port used for service communications
@@ -55,18 +56,26 @@ private:
 
     QString get_local_address();
 
-    // Service server for ping requests and transfer requests to this endpoint
+    // Service server for incoming ping requests and transfer requests to this endpoint
     QTcpServer m_service_server;
 
-    // Service socket for ping requests and transfer requests to a remote endpoint
+    // Service socket for outgoing ping requests and transfer requests to a remote endpoint
     QTcpSocket m_service_socket;
 
     // All pending transfer requests from external endpoints
     QVector<TransferRequest> m_external_transfer_requests;
     void add_new_external_transfer_request(TransferRequest req);
 
+    // All sent pending transfer requests
+    QMutex m_my_transfer_requests_mutex;
     QVector<TransferRequest> m_my_transfer_requests;
     void add_new_my_transfer_request(TransferRequest req);
+
+    // Transfer server for incoming pending requests
+    std::unique_ptr<TransferListener> m_transfer_listener;
+    bool my_transfer_retriever(TransferRequest& req); // Retrieves a 'my transfer' request from the id
+
+    QString form_local_destination_file(TransferRequest& req);
 
 private slots:
     void process_new_connection();
@@ -76,6 +85,7 @@ private slots:
     void service_socket_connected();
     void service_socket_read_ready();
     void service_socket_error(QAbstractSocket::SocketError err);
+    void listview_transfer_accepted(QModelIndex index);
 
     void SIMULATE_SEND(bool);
 };

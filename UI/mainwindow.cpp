@@ -2,6 +2,7 @@
 #include <ui_mainwindow.h>
 #include <UI/DynamicTreeWidgetItem.h>
 #include <UI/DynamicTreeWidgetItemDelegate.h>
+#include <Receiver/TransferStarter.h>
 #include <QTreeWidget>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -18,8 +19,8 @@
 #include <functional>
 #include <QDataStream>
 #include <QNetworkInterface>
-
-#include <iostream> // DEBUG
+#include <QFileInfo>
+#include <functional>
 
 MainWindow::MainWindow(QWidget *parent) :
     QMainWindow(parent),
@@ -49,11 +50,7 @@ MainWindow::MainWindow(QWidget *parent) :
           QStringList headers;
           headers << tr("Progresso") << tr("Destinatario") << tr("File");
 
-          // Main transfers list
-          auto delegate = new DynamicTreeWidgetItemDelegate(this);
-          connect(delegate, SIGNAL(needsUpdate(const QModelIndex&)), m_sentView, SLOT(update(const QModelIndex&)));
-          connect(delegate, SIGNAL(clicked(const QModelIndex)), m_sentView, SLOT(clicked(const QModelIndex)));
-          m_sentView->setItemDelegate(delegate);
+          // Main outgoing transfers list
           m_sentView->setHeaderLabels(headers);
           m_sentView->setSelectionBehavior(QAbstractItemView::SelectRows);
           m_sentView->setAlternatingRowColors(true);
@@ -72,12 +69,12 @@ MainWindow::MainWindow(QWidget *parent) :
           QStringList headers;
           headers << tr("Progresso") << tr("Mittente") << tr("Destinazione");
 
-          // Main transfers list
-
+          // Main incoming transfers list
           m_receivedView->setHeaderLabels(headers);
           m_receivedView->setSelectionBehavior(QAbstractItemView::SelectRows);
           m_receivedView->setAlternatingRowColors(true);
           m_receivedView->setRootIsDecorated(false);
+          connect(m_receivedView, SIGNAL(click(QModelIndex)), this, SLOT(listview_transfer_accepted(QModelIndex)));
 
           QVBoxLayout *vbox = new QVBoxLayout;
           vbox->addWidget(m_receivedView);
@@ -125,12 +122,15 @@ MainWindow::MainWindow(QWidget *parent) :
 
     connect(ui->pushButton, SIGNAL(clicked(bool)), this, SLOT(SIMULATE_SEND(bool)));
 
+    m_default_download_path = QDir::currentPath();
     initialize_peers();
-    initialize_server();
+    initialize_servers();
 }
 
 MainWindow::~MainWindow()
 {
+  if (m_transfer_listener->isRunning())
+    m_transfer_listener->terminate();
   delete ui;
 }
 
@@ -260,9 +260,10 @@ void MainWindow::initialize_peers()
   }
 }
 
-void MainWindow::initialize_server()
+void MainWindow::initialize_servers()
 {
-  if (!m_service_server.listen(QHostAddress::LocalHost, m_service_port)) {
+  if (!m_service_server.listen(QHostAddress::LocalHost, m_service_port))
+  {
     QMessageBox::critical(this, tr("Server"),
                           tr("Errore durante l'inizializzazione del service server: '%1'\n\nL'applicazione sara' chiusa.")
                           .arg(m_service_server.errorString()));
@@ -271,16 +272,24 @@ void MainWindow::initialize_server()
 
   connect(&m_service_server, SIGNAL(newConnection()), this, SLOT(process_new_connection()));
 
-  qDebug() << "[initialize_server] Server now listening on port " << m_service_port;
+  qDebug() << "[initialize_server] Service server now listening on port " << m_service_port;
+
+  m_transfer_listener = std::make_unique<TransferListener>(std::bind(&MainWindow::my_transfer_retriever, this, std::placeholders::_1));
+
+  m_transfer_listener->set_transfer_port(m_transfer_port);
+  m_transfer_listener->moveToThread(m_transfer_listener.get());
+  m_transfer_listener->start();
+
+  qDebug() << "[initialize_server] Transfer server now listening on port " << m_transfer_port;
 }
 
 QString MainWindow::get_local_address()
 {
-  foreach (const QHostAddress &address, QNetworkInterface::allAddresses()) {
-    if (address.protocol() == QAbstractSocket::IPv4Protocol && address != QHostAddress(QHostAddress::LocalHost))
-      return address.toString();
-  }
-  qDebug() << "[get_local_address] Could not determine local address";
+//  foreach (const QHostAddress &address, QNetworkInterface::allAddresses()) {
+//    if (address.protocol() == QAbstractSocket::IPv4Protocol && address != QHostAddress(QHostAddress::LocalHost))
+//      return address.toString();
+//  }
+//  qDebug() << "[get_local_address] Could not determine local address";
   return QString("127.0.0.1");
 }
 
@@ -304,7 +313,42 @@ void MainWindow::add_new_external_transfer_request(TransferRequest req)
 
 void MainWindow::add_new_my_transfer_request(TransferRequest req)
 {
+  QMutexLocker lock(&m_my_transfer_requests_mutex);
   m_my_transfer_requests.append(req);
+
+  DynamicTreeWidgetItem *item = new DynamicTreeWidgetItem(m_sentView);
+
+  item->setData(0, Qt::UserRole + 0, false); // Start with progress bar - no control on sent
+
+  // item->setText(0, "0"); // Progress styled by delegate
+  item->setText(1, req.m_sender_address); // Sender
+  QString destinationFile = req.m_file_path;
+  item->setText(2, destinationFile); // Destination (remote file written)
+
+  item->setFlags(item->flags() & ~Qt::ItemIsEditable);
+  item->setTextAlignment(1, Qt::AlignHCenter);
+}
+
+bool MainWindow::my_transfer_retriever(TransferRequest& req)
+{
+  QMutexLocker lock(&m_my_transfer_requests_mutex);
+  for(auto& el : m_my_transfer_requests)
+  {
+    if (el.m_unique_id == req.m_unique_id)
+    {
+      req = el;
+      return true;
+    }
+  }
+  return false;
+}
+
+QString MainWindow::form_local_destination_file(TransferRequest& req)
+{
+  // Create a local file destination from an external request
+  QFileInfo finfo(QFile(req.m_file_path).fileName());
+  QString fname(finfo.fileName());
+  return m_default_download_path + QDir::separator() + fname;
 }
 
 void MainWindow::process_new_connection() // SLOT
@@ -386,17 +430,24 @@ void MainWindow::server_socket_error(QAbstractSocket::SocketError err) // SLOT
 
 void MainWindow::service_socket_connected() // SLOT
 {
+  // Send transfer request
   TransferRequest req = TransferRequest::generate_unique();
   req.m_file_path = "C:/Users/Alex/Desktop/car.mpg";
   req.m_size = 6277450;
   req.m_sender_address = get_local_address();
   req.m_sender_transfer_port = m_transfer_port;
+
   QByteArray block;
   QDataStream out(&block, QIODevice::WriteOnly);
   out.setVersion(QDataStream::Qt_5_7);
+
   out << QString("FILE") << req.m_unique_id << req.m_file_path << req.m_size
       << req.m_sender_address << req.m_sender_transfer_port;
+
   m_service_socket.write(block);
+  m_service_socket.disconnectFromHost();
+
+  add_new_my_transfer_request(req);
 }
 
 void MainWindow::service_socket_read_ready() // SLOT
@@ -411,6 +462,18 @@ void MainWindow::service_socket_error(QAbstractSocket::SocketError err) // SLOT
   socket->abort();
 }
 
+void MainWindow::listview_transfer_accepted(QModelIndex index) // SLOT
+{
+  qDebug() << "[listview_transfer_accepted] Accepting transfer - " << index.row();
+
+  auto req = m_external_transfer_requests[index.row()];
+
+  TransferStarter *ts = new TransferStarter(req, form_local_destination_file(req));
+  connect(ts, SIGNAL(finished()), ts, SLOT(deleteLater()));
+
+  ts->start();
+}
+
 void MainWindow::SIMULATE_SEND(bool) // SLOT DEBUG
 {
   // GRAB FIRST ONE
@@ -422,7 +485,7 @@ void MainWindow::SIMULATE_SEND(bool) // SLOT DEBUG
   connect(&m_service_socket, SIGNAL(connected()), this, SLOT(service_socket_connected()));
   connect(&m_service_socket, SIGNAL(readyRead()), this, SLOT(service_socket_read_ready()));
   connect(&m_service_socket, SIGNAL(error(QAbstractSocket::SocketError)),
-          this, SLOT(service_socket_error(QAbstractSocket::SocketError)), Qt::DirectConnection);
+          this, SLOT(service_socket_error(QAbstractSocket::SocketError)));
 
   m_service_socket.abort();
   m_service_socket.connectToHost(ip, service_port);
