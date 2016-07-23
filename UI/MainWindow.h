@@ -89,7 +89,8 @@ private:
     // Retrieves a 'my transfer' request from the id. Also retrieves the associated listview item pointer
     bool my_transfer_retriever(TransferRequest& req, DynamicTreeWidgetItem *&item_ptr);
 
-    QString form_local_destination_file(TransferRequest& req);
+    QString form_local_destination_file(TransferRequest& req) const;
+    QString get_peer_name_from_address(QString address) const;
 
 private slots:
     void process_new_connection();

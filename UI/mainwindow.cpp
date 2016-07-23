@@ -407,7 +407,7 @@ void MainWindow::add_new_external_transfer_requests(QVector<TransferRequest> req
     item->setData(0, Qt::UserRole + 0, true); // Start with accept button
 
     // item->setText(0, "0"); // Progress styled by delegate
-    item->setText(1, request.m_sender_address); // Sender
+    item->setText(1, get_peer_name_from_address(request.m_sender_address)); // Sender
     QString destinationFile = request.m_file_path;
     item->setText(2, destinationFile); // Destination (local file written)
 
@@ -428,7 +428,7 @@ void MainWindow::add_new_my_transfer_requests(QVector<TransferRequest> reqs)
     item->setData(0, Qt::UserRole + 0, false); // Start with progress bar - no control on sent
 
     // item->setText(0, "0"); // Progress styled by delegate
-    item->setText(1, req.m_sender_address); // Sender
+    item->setText(1, get_peer_name_from_address(req.m_sender_address)); // Sender
     QString destinationFile = req.m_file_path;
     item->setText(2, destinationFile); // Destination (remote file written)
 
@@ -454,12 +454,24 @@ bool MainWindow::my_transfer_retriever(TransferRequest& req, DynamicTreeWidgetIt
   return false;
 }
 
-QString MainWindow::form_local_destination_file(TransferRequest& req)
+QString MainWindow::form_local_destination_file(TransferRequest& req) const
 {
   // Create a local file destination from an external request
   QFileInfo finfo(QFile(req.m_file_path).fileName());
   QString fname(finfo.fileName());
   return m_default_download_path + QDir::separator() + fname;
+}
+
+QString MainWindow::get_peer_name_from_address(QString address) const
+{
+  for(auto& peer : m_peers)
+  {
+    QString ip, hostname; int service_port, transfer_port;
+    std::tie(ip, service_port, transfer_port, hostname) = peer;
+    if (ip == address)
+      return hostname;
+  }
+  return QString("[Unknown]");
 }
 
 void MainWindow::process_new_connection() // SLOT

@@ -11,9 +11,9 @@ enum State {Normal = 0, Pressed, Hovered};
 class DynamicTreeWidgetItemDelegate : public QStyledItemDelegate
 {
 
-  // Qt::UserRole + 0 -> Button or progressbar?
-  // Qt::UserRole + 1 -> Button style
-  // Qt::UserRole + 2 -> Progressbar value
+  // Qt::UserRole + 0 -> (bool)Button?
+  // Qt::UserRole + 1 -> (int - State)Button style
+  // Qt::UserRole + 2 -> (int)Progressbar value
   Q_OBJECT
 public:
     DynamicTreeWidgetItemDelegate(QObject *parent = Q_NULLPTR) :

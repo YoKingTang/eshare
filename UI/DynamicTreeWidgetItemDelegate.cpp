@@ -5,58 +5,85 @@ bool DynamicTreeWidgetItemDelegate::editorEvent(QEvent *event, QAbstractItemMode
                                                 const QStyleOptionViewItem &option, const QModelIndex &index)
 {
   m_model = model;
-  if (event->type() == QEvent::MouseMove) {
-    if (index != m_lastUnderMouse) {
-      if (m_lastUnderMouse.isValid()) {
+
+  if (event->type() == QEvent::MouseMove)
+  {
+    if (index != m_lastUnderMouse)
+    {
+      if (m_lastUnderMouse.isValid())
+      {
         model->setData(m_lastUnderMouse, (int)Normal, Qt::UserRole + 1);
         emit needsUpdate(m_lastUnderMouse);
       }
-      if (index.isValid() && index.column() == 0) {
+      if (index.isValid() && index.column() == 0)
+      {
         model->setData(index, (int)Hovered, Qt::UserRole + 1);
         emit needsUpdate(index);
         m_lastUnderMouse = index;
-      } else {
+      }
+      else
+      {
         m_lastUnderMouse = QModelIndex();
       }
     }
   }
-  if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonDblClick) {
-    if (index != m_lastUnderMouse) {
-      if (m_lastUnderMouse.isValid()) {
+  if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonDblClick)
+  {
+    if (index != m_lastUnderMouse)
+    {
+      if (m_lastUnderMouse.isValid())
+      {
         model->setData(m_lastUnderMouse, (int)Normal, Qt::UserRole + 1);
         emit needsUpdate(m_lastUnderMouse);
       }
-      if (index.isValid() && index.column() == 0) {
+      if (index.isValid() && index.column() == 0)
+      {
         model->setData(index, (int)Pressed, Qt::UserRole + 1);
         emit needsUpdate(index);
-        emit clicked(index);
+        if (index.data(Qt::UserRole + 0 /* Button or progressbar */).toBool() == true)
+          emit clicked(index); // Emit clicked only if button
         m_lastUnderMouse = index;
-      } else {
+      }
+      else
+      {
         m_lastUnderMouse = QModelIndex();
       }
-    } else {
-      if (m_lastUnderMouse.isValid()) {
+    }
+    else
+    {
+      if (m_lastUnderMouse.isValid())
+      {
         model->setData(m_lastUnderMouse, (int)Pressed, Qt::UserRole + 1);
         emit needsUpdate(m_lastUnderMouse);
-        emit clicked(m_lastUnderMouse);
+        if (m_lastUnderMouse.data(Qt::UserRole + 0 /* Button or progressbar */).toBool() == true)
+          emit clicked(m_lastUnderMouse); // Emit clicked only if button
       }
     }
   }
-  if (event->type() == QEvent::MouseButtonRelease) {
-    if (index != m_lastUnderMouse) {
-      if (m_lastUnderMouse.isValid()) {
+  if (event->type() == QEvent::MouseButtonRelease)
+  {
+    if (index != m_lastUnderMouse)
+    {
+      if (m_lastUnderMouse.isValid())
+      {
         model->setData(m_lastUnderMouse, (int)Normal, Qt::UserRole + 1);
         emit needsUpdate(m_lastUnderMouse);
       }
-      if (index.isValid() && index.column() == 0) {
+      if (index.isValid() && index.column() == 0)
+      {
         model->setData(index, (int)Hovered, Qt::UserRole + 1);
         emit needsUpdate(index);
         m_lastUnderMouse = index;
-      } else {
+      }
+      else
+      {
         m_lastUnderMouse = QModelIndex();
       }
-    } else {
-      if (m_lastUnderMouse.isValid()) {
+    }
+    else
+    {
+      if (m_lastUnderMouse.isValid())
+      {
         model->setData(m_lastUnderMouse, (int)Hovered, Qt::UserRole + 1);
         emit needsUpdate(m_lastUnderMouse);
       }
