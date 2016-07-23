@@ -119,10 +119,6 @@ MainWindow::MainWindow(QWidget *parent) :
 
     // Continue initialization
 
-    //m_defaultDownloadPath = QDir::currentPath();
-
-    connect(ui->pushButton, SIGNAL(clicked(bool)), this, SLOT(SIMULATE_SEND(bool)));
-
     m_default_download_path = QDir::currentPath();
     initialize_peers();
     initialize_servers();
@@ -196,9 +192,10 @@ void MainWindow::dropEvent(QDropEvent *event)
       return;
     }
 
-    // >> Initiate transfers with peer <<
+    // >> Send requests to peer <<
 
-    m_my_requests_to_send.clear();
+    m_service_socket.abort();
+    m_my_pending_requests_to_send.clear();
 
     for(auto& file : path_list)
     {
@@ -208,7 +205,7 @@ void MainWindow::dropEvent(QDropEvent *event)
       req.m_sender_address = get_local_address();
       req.m_sender_transfer_port = m_transfer_port;
 
-      m_my_requests_to_send.append(req);
+      m_my_pending_requests_to_send.append(req);
     }
 
     auto peer = m_peers[index];
@@ -221,7 +218,6 @@ void MainWindow::dropEvent(QDropEvent *event)
     connect(&m_service_socket, SIGNAL(error(QAbstractSocket::SocketError)),
             this, SLOT(service_socket_error(QAbstractSocket::SocketError)));
 
-    m_service_socket.abort();
     m_service_socket.connectToHost(ip, service_port);
   }
 }
@@ -399,7 +395,7 @@ QString MainWindow::get_local_address()
   return QString("127.0.0.1");
 }
 
-void MainWindow::add_new_external_transfer_requests(const QVector<TransferRequest>& reqs)
+void MainWindow::add_new_external_transfer_requests(QVector<TransferRequest> reqs)
 {
   for(auto& request : reqs)
   {
@@ -419,7 +415,7 @@ void MainWindow::add_new_external_transfer_requests(const QVector<TransferReques
   }
 }
 
-void MainWindow::add_new_my_transfer_requests(const QVector<TransferRequest>& reqs)
+void MainWindow::add_new_my_transfer_requests(QVector<TransferRequest> reqs)
 {
   QMutexLocker lock(&m_my_transfer_requests_mutex);
   for (auto& req : reqs)
@@ -547,17 +543,26 @@ void MainWindow::server_ready_read() // SLOT
       QVector<TransferRequest> temp;
       if(!read_transfer_requests(socket, temp, n_files))
         return; // Wait for more data
+
+      socket->setProperty("state", "processed");
+
       add_new_external_transfer_requests(temp);
+
       socket->disconnectFromHost();
     }
   }
   else if (state == "sending_transfer_requests")
   {
     int n_files = socket->property("files_n").toInt();
+
     QVector<TransferRequest> temp;
     if(!read_transfer_requests(socket, temp, n_files))
       return; // Wait for more data
+
+    socket->setProperty("state", "processed");
+
     add_new_external_transfer_requests(temp);
+
     socket->disconnectFromHost();
   }
 }
@@ -577,9 +582,9 @@ void MainWindow::service_socket_connected() // SLOT
   QDataStream out(&block, QIODevice::WriteOnly);
   out.setVersion(QDataStream::Qt_5_7);
 
-  out << QString("FILES") << qint64(m_my_requests_to_send.size());
+  out << QString("FILES") << qint64(m_my_pending_requests_to_send.size());
 
-  for(auto& req : m_my_requests_to_send)
+  for(auto& req : m_my_pending_requests_to_send)
   {
     out << req.m_unique_id << req.m_file_path << req.m_size
         << req.m_sender_address << req.m_sender_transfer_port;
@@ -588,7 +593,7 @@ void MainWindow::service_socket_connected() // SLOT
 
   m_service_socket.write(block);
 
-  add_new_my_transfer_requests(m_my_requests_to_send);
+  add_new_my_transfer_requests(m_my_pending_requests_to_send);
 
   m_service_socket.flush();
   m_service_socket.disconnectFromHost();
@@ -602,7 +607,7 @@ void MainWindow::service_socket_read_ready() // SLOT
 void MainWindow::service_socket_error(QAbstractSocket::SocketError err) // SLOT
 {
   QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
-  m_my_requests_to_send.clear(); // No local pending requests can be sent
+  m_my_pending_requests_to_send.clear(); // No local pending requests can be sent
   qDebug() << "[server_socket_error] Error: " << err;
   socket->abort();
 }
@@ -706,21 +711,4 @@ void MainWindow::ping_socket_ready_read() // SLOT
     qDebug() << "[ping_socket_ready_read] Wrong ping response received";
   }
   socket->disconnectFromHost();
-}
-
-void MainWindow::SIMULATE_SEND(bool) // SLOT DEBUG
-{
-  // GRAB FIRST ONE
-  auto first = m_peers.front();
-
-  QString ip, hostname; int service_port, transfer_port;
-  std::tie(ip, service_port, transfer_port, hostname) = first;
-
-  connect(&m_service_socket, SIGNAL(connected()), this, SLOT(service_socket_connected()));
-  connect(&m_service_socket, SIGNAL(readyRead()), this, SLOT(service_socket_read_ready()));
-  connect(&m_service_socket, SIGNAL(error(QAbstractSocket::SocketError)),
-          this, SLOT(service_socket_error(QAbstractSocket::SocketError)));
-
-  m_service_socket.abort();
-  m_service_socket.connectToHost(ip, service_port);
 }

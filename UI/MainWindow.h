@@ -71,18 +71,18 @@ private:
     // Service server for incoming ping requests and transfer requests to this endpoint
     QTcpServer m_service_server;
 
-    // Service socket for outgoing ping requests and transfer requests to a remote endpoint
+    // Service socket for outgoing transfer requests to a remote endpoint
     QTcpSocket m_service_socket;
 
     // All pending transfer requests from external endpoints
     QVector<TransferRequest> m_external_transfer_requests;
-    void add_new_external_transfer_requests(const QVector<TransferRequest>& reqs);
+    void add_new_external_transfer_requests(QVector<TransferRequest> reqs);
 
     // All sent pending transfer requests
     QMutex m_my_transfer_requests_mutex;
     QVector<TransferRequest> m_my_transfer_requests;
-    void add_new_my_transfer_requests(const QVector<TransferRequest> &reqs);
-    QVector<TransferRequest> m_my_requests_to_send; // Temporary storage for requests not yet sent
+    void add_new_my_transfer_requests(QVector<TransferRequest> reqs);
+    QVector<TransferRequest> m_my_pending_requests_to_send; // Temporary storage for requests not yet sent
 
     // Transfer server for incoming pending requests
     std::unique_ptr<TransferListener> m_transfer_listener;
@@ -105,8 +105,6 @@ private slots:
     void ping_failed(QAbstractSocket::SocketError);
     void ping_socket_connected();
     void ping_socket_ready_read();
-
-    void SIMULATE_SEND(bool);
 };
 
 #endif // MAINWINDOW_H
