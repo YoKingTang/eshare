@@ -58,6 +58,7 @@ void StarterSocketWrapper::new_transfer_connection() // SLOT
   {
     // 0-bytes file
     send_chunk_ACK();
+    m_socket.flush();
     m_socket.disconnectFromHost();
     m_parent.exit(0);
     return;
@@ -100,6 +101,7 @@ void StarterSocketWrapper::transfer_ready_read() // SLOT
       // Transfer finished
       emit update_percentage(100);
       send_chunk_ACK();
+      m_socket.flush();
       m_socket.waitForBytesWritten(2000); // We were no longer accepting bytes anyway
       m_socket.disconnectFromHost();
       m_parent.exit(0);

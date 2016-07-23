@@ -108,6 +108,7 @@ void ListenerSocketWrapper::socket_ready_read() // SLOT
       {
         // Transfer finished
         QMetaObject::invokeMethod(listview_item, "update_percentage", Q_ARG(int, 100));
+        socket->flush();
         socket->disconnectFromHost();
         return;
       }

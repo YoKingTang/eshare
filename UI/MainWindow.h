@@ -96,8 +96,8 @@ private slots:
     void server_ready_read();
     void server_socket_error(QAbstractSocket::SocketError err);
 
-    void service_socket_connected();
-    void service_socket_read_ready();
+    void temporary_service_socket_connected();
+    void temporary_service_socket_error(QAbstractSocket::SocketError err);
     void service_socket_error(QAbstractSocket::SocketError err);
     void listview_transfer_accepted(QModelIndex index);
 

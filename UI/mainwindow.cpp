@@ -194,7 +194,7 @@ void MainWindow::dropEvent(QDropEvent *event)
 
     // >> Send requests to peer <<
 
-    m_service_socket.abort();
+    QTcpSocket *temporary_service_socket = new QTcpSocket(this);
     m_my_pending_requests_to_send.clear();
 
     for(auto& file : path_list)
@@ -213,12 +213,13 @@ void MainWindow::dropEvent(QDropEvent *event)
     QString ip, hostname; int service_port, transfer_port;
     std::tie(ip, service_port, transfer_port, hostname) = peer;
 
-    connect(&m_service_socket, SIGNAL(connected()), this, SLOT(service_socket_connected()));
-    connect(&m_service_socket, SIGNAL(readyRead()), this, SLOT(service_socket_read_ready()));
-    connect(&m_service_socket, SIGNAL(error(QAbstractSocket::SocketError)),
-            this, SLOT(service_socket_error(QAbstractSocket::SocketError)));
+    connect(temporary_service_socket, SIGNAL(connected()), this, SLOT(temporary_service_socket_connected()));
+    connect(temporary_service_socket, SIGNAL(error(QAbstractSocket::SocketError)),
+            this, SLOT(temporary_service_socket_error(QAbstractSocket::SocketError)));
+    connect(temporary_service_socket, &QAbstractSocket::disconnected,
+            temporary_service_socket, &QObject::deleteLater);
 
-    m_service_socket.connectToHost(ip, service_port);
+    temporary_service_socket->connectToHost(ip, service_port);
   }
 }
 
@@ -548,6 +549,7 @@ void MainWindow::server_ready_read() // SLOT
 
       add_new_external_transfer_requests(temp);
 
+      socket->flush();
       socket->disconnectFromHost();
     }
   }
@@ -563,6 +565,7 @@ void MainWindow::server_ready_read() // SLOT
 
     add_new_external_transfer_requests(temp);
 
+    socket->flush();
     socket->disconnectFromHost();
   }
 }
@@ -574,8 +577,10 @@ void MainWindow::server_socket_error(QAbstractSocket::SocketError err) // SLOT
   socket->abort();
 }
 
-void MainWindow::service_socket_connected() // SLOT
+void MainWindow::temporary_service_socket_connected() // SLOT
 {
+  QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
+
   // Send pending transfer requests
 
   QByteArray block;
@@ -591,23 +596,25 @@ void MainWindow::service_socket_connected() // SLOT
 
   }
 
-  m_service_socket.write(block);
+  socket->write(block);
 
   add_new_my_transfer_requests(m_my_pending_requests_to_send);
 
-  m_service_socket.flush();
-  m_service_socket.disconnectFromHost();
+  socket->flush();
+  socket->disconnectFromHost();
 }
 
-void MainWindow::service_socket_read_ready() // SLOT
+void MainWindow::temporary_service_socket_error(QAbstractSocket::SocketError err) // SLOT
 {
-
+  QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
+  m_my_pending_requests_to_send.clear(); // No local pending requests can be sent
+  qDebug() << "[temporary_service_socket_error] Failed sending latest TransferRequest vector: " << err;
+  socket->abort();
 }
 
 void MainWindow::service_socket_error(QAbstractSocket::SocketError err) // SLOT
 {
   QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
-  m_my_pending_requests_to_send.clear(); // No local pending requests can be sent
   qDebug() << "[server_socket_error] Error: " << err;
   socket->abort();
 }
