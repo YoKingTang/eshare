@@ -17,7 +17,8 @@ SOURCES +=  main.cpp \
     UI/DynamicTreeWidgetItemDelegate.cpp \
     UI/TransferTreeView.cpp \
     Receiver/TransferStarter.cpp \
-    Chunker/Chunker.cpp
+    Chunker/Chunker.cpp \
+    UI/PickReceiver.cpp
 
 HEADERS  += \
     Data/TransferRequest.h \
@@ -27,7 +28,8 @@ HEADERS  += \
     UI/DynamicTreeWidgetItemDelegate.h \
     UI/TransferTreeView.h \
     Receiver/TransferStarter.h \
-    Chunker/Chunker.h
+    Chunker/Chunker.h \
+    UI/PickReceiver.h
 
 FORMS    += \
             UI/PickReceiver.ui \

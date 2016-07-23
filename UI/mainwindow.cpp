@@ -1,5 +1,6 @@
 #include <UI/MainWindow.h>
 #include <ui_mainwindow.h>
+#include <UI/PickReceiver.h>
 #include <UI/DynamicTreeWidgetItem.h>
 #include <UI/DynamicTreeWidgetItemDelegate.h>
 #include <Receiver/TransferStarter.h>
@@ -125,13 +126,104 @@ MainWindow::MainWindow(QWidget *parent) :
     m_default_download_path = QDir::currentPath();
     initialize_peers();
     initialize_servers();
+    initialize_peers_ping();
 }
 
 MainWindow::~MainWindow()
 {
   if (m_transfer_listener->isRunning())
     m_transfer_listener->terminate();
+  if (m_peers_ping_timer)
+    m_peers_ping_timer->stop();
   delete ui;
+}
+
+void MainWindow::dragEnterEvent(QDragEnterEvent *event)
+{
+  // Accept any file
+  QUrl url(event->mimeData()->text());
+  if (url.isValid() && url.scheme().toLower() == "file")
+    event->accept();
+}
+
+void MainWindow::dragMoveEvent(QDragMoveEvent *event)
+{
+  // Accept any file
+  QUrl url(event->mimeData()->text());
+  if (url.isValid() && url.scheme().toLower() == "file")
+    event->acceptProposedAction();
+}
+
+void MainWindow::dropEvent(QDropEvent *event)
+{
+  // Accept any drop if they exist
+  const QMimeData* mime_data = event->mimeData();
+
+  // Check the mime type, allowed types: a file or a list of files
+  if (mime_data->hasUrls()) {
+    QStringList path_list;
+    QList<QUrl> url_list = mime_data->urls();
+
+    // Get local paths and check for existence
+    for (int i = 0; i < url_list.size(); ++i) {
+      QString filepath = url_list.at(i).toLocalFile();
+      if (!QFile::exists(filepath)) {
+        QMessageBox::warning(this, "File non trovato", "File inaccessibile o inesistente:\n\n'"
+                             + filepath + "'\n\nOperazione annullata.");
+        return;
+      }
+      path_list.append(filepath);
+    }
+
+    // path_list now contains the bulk of files to process
+
+    // Prompt for a receiver with a word list based on all host names
+    PickReceiver dialog(m_peers_completion_list, this);
+    auto dialogResult = dialog.exec();
+    if (dialogResult != QDialog::DialogCode::Accepted)
+      return;
+
+    int index = dialog.getSelectedItem();
+
+    if (index == -1 || index >= m_peers.size()) {
+      QMessageBox::warning(this, "Selezione non valida", "Peer non valido.");
+      return;
+    }
+
+    if (m_peer_online[index] == false) {
+      QMessageBox::warning(this, "Peer offline", "Impossibile iniziare un trasferimento con un peer offline.\n"
+                           "Controllare la connessione, i cavi di rete e che le porte su eventuali firewall siano aperte.");
+      return;
+    }
+
+    // >> Initiate transfers with peer <<
+
+    m_my_requests_to_send.clear();
+
+    for(auto& file : path_list)
+    {
+      TransferRequest req = TransferRequest::generate_unique();
+      req.m_file_path = file;
+      req.m_size = QFile(file).size();
+      req.m_sender_address = get_local_address();
+      req.m_sender_transfer_port = m_transfer_port;
+
+      m_my_requests_to_send.append(req);
+    }
+
+    auto peer = m_peers[index];
+
+    QString ip, hostname; int service_port, transfer_port;
+    std::tie(ip, service_port, transfer_port, hostname) = peer;
+
+    connect(&m_service_socket, SIGNAL(connected()), this, SLOT(service_socket_connected()));
+    connect(&m_service_socket, SIGNAL(readyRead()), this, SLOT(service_socket_read_ready()));
+    connect(&m_service_socket, SIGNAL(error(QAbstractSocket::SocketError)),
+            this, SLOT(service_socket_error(QAbstractSocket::SocketError)));
+
+    m_service_socket.abort();
+    m_service_socket.connectToHost(ip, service_port);
+  }
 }
 
 namespace {
@@ -244,6 +336,8 @@ void MainWindow::initialize_peers()
   // Load peers and other settings from configuration files
   read_peers_from_file();
 
+  m_peer_online.resize(m_peers.size(), false);
+
   // Process every peer found
   size_t index = 0;
   for(auto& tuple : m_peers)
@@ -254,7 +348,10 @@ void MainWindow::initialize_peers()
     QTreeWidgetItem *item = new QTreeWidgetItem(m_peersView);
     item->setText(1, hostname);
     item->setTextAlignment(1, Qt::AlignLeft);
-    item->setIcon(0, QIcon(":res/red_light.png"));
+    item->setIcon(0, QIcon(":Res/red_light.png"));
+
+    // Generate autocompletion list from peers' data
+    m_peers_completion_list.append(hostname);
 
     ++index;
   }
@@ -284,6 +381,14 @@ void MainWindow::initialize_servers()
   qDebug() << "[initialize_server] Transfer server now listening on port " << m_transfer_port;
 }
 
+void MainWindow::initialize_peers_ping()
+{
+  // Ping all peers asynchronously at regular intervals while this window is on
+  m_peers_ping_timer = std::make_unique<QTimer>(this);
+  connect(m_peers_ping_timer.get(), SIGNAL(timeout()), this, SLOT(ping_peers()));
+  m_peers_ping_timer->start(5000);
+}
+
 QString MainWindow::get_local_address()
 {
 //  foreach (const QHostAddress &address, QNetworkInterface::allAddresses()) {
@@ -294,41 +399,45 @@ QString MainWindow::get_local_address()
   return QString("127.0.0.1");
 }
 
-void MainWindow::add_new_external_transfer_request(TransferRequest req)
+void MainWindow::add_new_external_transfer_requests(const QVector<TransferRequest>& reqs)
 {
-  m_external_transfer_requests.append(req);
+  for(auto& request : reqs)
+  {
+    m_external_transfer_requests.append(request);
 
-  DynamicTreeWidgetItem *item = new DynamicTreeWidgetItem(m_receivedView);
+    DynamicTreeWidgetItem *item = new DynamicTreeWidgetItem(m_receivedView);
 
-  item->setData(0, Qt::UserRole + 0, true); // Start with accept button
+    item->setData(0, Qt::UserRole + 0, true); // Start with accept button
 
-  // item->setText(0, "0"); // Progress styled by delegate
-  item->setText(1, req.m_sender_address); // Sender
-  QString destinationFile = req.m_file_path;
-  item->setText(2, destinationFile); // Destination (local file written)
+    // item->setText(0, "0"); // Progress styled by delegate
+    item->setText(1, request.m_sender_address); // Sender
+    QString destinationFile = request.m_file_path;
+    item->setText(2, destinationFile); // Destination (local file written)
 
-  item->setFlags(item->flags() & ~Qt::ItemIsEditable);
-  item->setTextAlignment(1, Qt::AlignHCenter);
-
-  // TODO connect(&transferThread, SIGNAL(update_percentage(int)), item, SLOT(update_percentage(int)));
+    item->setFlags(item->flags() & ~Qt::ItemIsEditable);
+    item->setTextAlignment(1, Qt::AlignHCenter);
+  }
 }
 
-void MainWindow::add_new_my_transfer_request(TransferRequest req)
+void MainWindow::add_new_my_transfer_requests(const QVector<TransferRequest>& reqs)
 {
   QMutexLocker lock(&m_my_transfer_requests_mutex);
-  m_my_transfer_requests.append(req);
+  for (auto& req : reqs)
+  {
+    m_my_transfer_requests.append(req);
 
-  DynamicTreeWidgetItem *item = new DynamicTreeWidgetItem(m_sentView);
+    DynamicTreeWidgetItem *item = new DynamicTreeWidgetItem(m_sentView);
 
-  item->setData(0, Qt::UserRole + 0, false); // Start with progress bar - no control on sent
+    item->setData(0, Qt::UserRole + 0, false); // Start with progress bar - no control on sent
 
-  // item->setText(0, "0"); // Progress styled by delegate
-  item->setText(1, req.m_sender_address); // Sender
-  QString destinationFile = req.m_file_path;
-  item->setText(2, destinationFile); // Destination (remote file written)
+    // item->setText(0, "0"); // Progress styled by delegate
+    item->setText(1, req.m_sender_address); // Sender
+    QString destinationFile = req.m_file_path;
+    item->setText(2, destinationFile); // Destination (remote file written)
 
-  item->setFlags(item->flags() & ~Qt::ItemIsEditable);
-  item->setTextAlignment(1, Qt::AlignHCenter);
+    item->setFlags(item->flags() & ~Qt::ItemIsEditable);
+    item->setTextAlignment(1, Qt::AlignHCenter);
+  }
 }
 
 bool MainWindow::my_transfer_retriever(TransferRequest& req, DynamicTreeWidgetItem *& item_ptr)
@@ -377,15 +486,21 @@ void MainWindow::server_ready_read() // SLOT
   QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
   auto state = socket->property("state").toString();
 
-  auto read_transfer_request = [](QTcpSocket *socket, TransferRequest& fill) {
+  auto read_transfer_requests = [](QTcpSocket *socket, QVector<TransferRequest>& fill, int files_n) {
     QDataStream read_stream(socket);
     read_stream.setVersion(QDataStream::Qt_5_7);
     read_stream.startTransaction();
-    read_stream >> fill.m_unique_id >> fill.m_file_path >> fill.m_size >>
-                   fill.m_sender_address >> fill.m_sender_transfer_port;
+    for(int i = 0; i < files_n; ++i)
+    {
+      TransferRequest req;
+      read_stream >> req.m_unique_id >> req.m_file_path >> req.m_size >>
+                     req.m_sender_address >> req.m_sender_transfer_port;
+      fill.append(req);
+    }
     if (!read_stream.commitTransaction())
     {
       read_stream.rollbackTransaction();
+      fill.clear();
       return false; // Wait for more data
     }
     return true;
@@ -394,34 +509,55 @@ void MainWindow::server_ready_read() // SLOT
   if (state == "not_processed")
   {
     QString command;
+    qint64 n_files;
     QDataStream read_stream(socket);
     read_stream.setVersion(QDataStream::Qt_5_7);
     read_stream.startTransaction();
-    read_stream >> command;
+    read_stream >> command >> n_files;
     if (!read_stream.commitTransaction())
     {
       read_stream.rollbackTransaction();
       return; // Wait for more data
     }
 
-    // TODO: command ping
-
-    if (command == "FILE")
+    if (command == "PING?")
     {
-      socket->setProperty("state", "sending_transfer_request");
-      TransferRequest temp;
-      if(!read_transfer_request(socket, temp))
+      socket->setProperty("state", "pong_sent");
+
+      QByteArray block;
+      QDataStream out(&block, QIODevice::WriteOnly);
+      out.setVersion(QDataStream::Qt_5_7);
+      out << QString("PONG!");
+
+      socket->write(block);
+      socket->flush();
+      socket->disconnectFromHost();
+    }
+    else if (command == "FILES")
+    {
+      if (n_files <= 0 || n_files > 500)
+      {
+        qDebug() << "[server_ready_read] Dropping invalid n_files request: " << n_files;
+        socket->abort();
+        return;
+      }
+      socket->setProperty("state", "sending_transfer_requests");
+      socket->setProperty("files_n", (int)n_files);
+
+      QVector<TransferRequest> temp;
+      if(!read_transfer_requests(socket, temp, n_files))
         return; // Wait for more data
-      add_new_external_transfer_request(temp);
+      add_new_external_transfer_requests(temp);
       socket->disconnectFromHost();
     }
   }
-  else if (state == "sending_transfer_request")
+  else if (state == "sending_transfer_requests")
   {
-    TransferRequest temp;
-    if(!read_transfer_request(socket, temp))
+    int n_files = socket->property("files_n").toInt();
+    QVector<TransferRequest> temp;
+    if(!read_transfer_requests(socket, temp, n_files))
       return; // Wait for more data
-    add_new_external_transfer_request(temp);
+    add_new_external_transfer_requests(temp);
     socket->disconnectFromHost();
   }
 }
@@ -435,24 +571,27 @@ void MainWindow::server_socket_error(QAbstractSocket::SocketError err) // SLOT
 
 void MainWindow::service_socket_connected() // SLOT
 {
-  // Send transfer request
-  TransferRequest req = TransferRequest::generate_unique();
-  req.m_file_path = "C:/Users/Alex/Desktop/car.mpg";
-  req.m_size = 6277450;
-  req.m_sender_address = get_local_address();
-  req.m_sender_transfer_port = m_transfer_port;
+  // Send pending transfer requests
 
   QByteArray block;
   QDataStream out(&block, QIODevice::WriteOnly);
   out.setVersion(QDataStream::Qt_5_7);
 
-  out << QString("FILE") << req.m_unique_id << req.m_file_path << req.m_size
-      << req.m_sender_address << req.m_sender_transfer_port;
+  out << QString("FILES") << qint64(m_my_requests_to_send.size());
+
+  for(auto& req : m_my_requests_to_send)
+  {
+    out << req.m_unique_id << req.m_file_path << req.m_size
+        << req.m_sender_address << req.m_sender_transfer_port;
+
+  }
 
   m_service_socket.write(block);
-  m_service_socket.disconnectFromHost();
 
-  add_new_my_transfer_request(req);
+  add_new_my_transfer_requests(m_my_requests_to_send);
+
+  m_service_socket.flush();
+  m_service_socket.disconnectFromHost();
 }
 
 void MainWindow::service_socket_read_ready() // SLOT
@@ -463,6 +602,7 @@ void MainWindow::service_socket_read_ready() // SLOT
 void MainWindow::service_socket_error(QAbstractSocket::SocketError err) // SLOT
 {
   QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
+  m_my_requests_to_send.clear(); // No local pending requests can be sent
   qDebug() << "[server_socket_error] Error: " << err;
   socket->abort();
 }
@@ -480,6 +620,92 @@ void MainWindow::listview_transfer_accepted(QModelIndex index) // SLOT
   connect(ts, SIGNAL(update_percentage(int)), item, SLOT(update_percentage(int)));
 
   ts->start();
+}
+
+void MainWindow::ping_peers() // SLOT
+{
+  size_t index = 0;
+  for(auto& tuple : m_peers)
+  {
+    QString ip, hostname; int service_port, transfer_port;
+    std::tie(ip, service_port, transfer_port, hostname) = tuple;
+
+    QTcpSocket *ping_socket = new QTcpSocket(this);
+    ping_socket->setProperty("state", "awaiting_ping_connection");
+    ping_socket->setProperty("peer_id", index);
+
+    connect(ping_socket, SIGNAL(connected()), this, SLOT(ping_socket_connected()));
+    connect(ping_socket, SIGNAL(readyRead()), this, SLOT(ping_socket_ready_read()));
+    connect(ping_socket, SIGNAL(error(QAbstractSocket::SocketError)),
+            this, SLOT(ping_failed(QAbstractSocket::SocketError)));
+    connect(ping_socket, &QAbstractSocket::disconnected,
+            ping_socket, &QObject::deleteLater);
+
+    ping_socket->connectToHost(ip, service_port);
+
+    ++index;
+  }
+}
+
+void MainWindow::ping_failed(QAbstractSocket::SocketError) // SLOT
+{
+  QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
+  auto peer_id = socket->property("peer_id").toInt();
+
+  m_peer_online[peer_id] = false;
+
+  auto item = m_peersView->topLevelItem(peer_id);
+  item->setIcon(0, QIcon(":Res/red_light.png"));
+
+  socket->abort();
+}
+
+void MainWindow::ping_socket_connected() // SLOT
+{
+  QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
+
+  QByteArray block;
+  QDataStream out(&block, QIODevice::WriteOnly);
+  out.setVersion(QDataStream::Qt_5_7);
+  out << QString("PING?") << qint64(0) /* Placeholder for 0 files */;
+
+  socket->write(block);
+  socket->flush();
+}
+
+void MainWindow::ping_socket_ready_read() // SLOT
+{
+  QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
+  auto peer_id = socket->property("peer_id").toInt();
+
+  QString command;
+  QDataStream read_stream(socket);
+  read_stream.setVersion(QDataStream::Qt_5_7);
+  read_stream.startTransaction();
+  read_stream >> command;
+  if (!read_stream.commitTransaction())
+  {
+    read_stream.rollbackTransaction();
+    return; // Wait for more data
+  }
+
+  if (command == "PONG!")
+  {
+    m_peer_online[peer_id] = true;
+
+    auto item = m_peersView->topLevelItem(peer_id);
+    item->setIcon(0, QIcon(":Res/green_light.png"));
+  }
+  else
+  {
+    m_peer_online[peer_id] = false;
+
+    auto item = m_peersView->topLevelItem(peer_id);
+    item->setIcon(0, QIcon(":Res/red_light.png"));
+
+    qDebug() << "[ping_socket_ready_read] Wrong ping response received";
+  }
+  socket->disconnectFromHost();
 }
 
 void MainWindow::SIMULATE_SEND(bool) // SLOT DEBUG
