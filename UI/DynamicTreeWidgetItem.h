@@ -10,6 +10,9 @@ class DynamicTreeWidgetItem : public QObject, public QTreeWidgetItem {
 public:
   DynamicTreeWidgetItem (QTreeWidget *view);
 
+private:
+  QTreeWidget *m_view = nullptr;
+
 public slots:
 
   void update_percentage(int value);

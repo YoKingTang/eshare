@@ -1,4 +1,5 @@
 #include <Listener/TransferListener.h>
+#include <UI/MainWindow.h>
 #include <Chunker/Chunker.h>
 #include <QMessageBox>
 #include <QTcpSocket>
@@ -114,7 +115,10 @@ void ListenerSocketWrapper::socket_ready_read() // SLOT
       }
 
       if (listview_item)
-        QMetaObject::invokeMethod(listview_item, "update_percentage", Q_ARG(int, ((float)chunker->get_pos() / (float)chunker->get_file_size()) * 100));
+      {
+        int percentage = ((float)chunker->get_pos() / (float)chunker->get_file_size()) * 100;
+        QMetaObject::invokeMethod(listview_item, "update_percentage", Q_ARG(int, percentage));
+      }
 
       CHECK_SOCKET_IO_SUCCESS(socket->write(chunker->read_next_chunk()));
     }
@@ -135,7 +139,8 @@ void ListenerSocketWrapper::socket_error(QAbstractSocket::SocketError err) // SL
   socket->abort();
 }
 
-TransferListener::TransferListener(std::function<bool(TransferRequest&, DynamicTreeWidgetItem*&)> trans_retriever) :
+TransferListener::TransferListener(MainWindow *main_win, std::function<bool(TransferRequest&, DynamicTreeWidgetItem*&)> trans_retriever) :
+  m_main_win(main_win),
   m_trans_retriever(trans_retriever)
 {}
 

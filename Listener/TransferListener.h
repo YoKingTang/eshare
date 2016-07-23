@@ -9,6 +9,7 @@
 #include <functional>
 
 class TransferListener;
+class MainWindow;
 
 // The main transfer listener - identifies incoming acknowledges
 // according to the list of local pending transfers and start the
@@ -36,13 +37,14 @@ class TransferListener : public QThread {
   friend class ListenerSocketWrapper;
 public:
 
-  TransferListener(std::function<bool(TransferRequest&, DynamicTreeWidgetItem*&)> trans_retriever);
+  TransferListener(MainWindow *main_win, std::function<bool(TransferRequest&, DynamicTreeWidgetItem*&)> trans_retriever);
 
   void set_transfer_port(int local_transfer_port);
 
 private:
   void run() Q_DECL_OVERRIDE;
 
+  MainWindow *m_main_win = nullptr;
   std::function<bool(TransferRequest&, DynamicTreeWidgetItem*&)> m_trans_retriever; // Needs to be thread-safe
 
   int m_local_transfer_port = 67;

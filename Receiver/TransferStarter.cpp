@@ -103,6 +103,7 @@ void StarterSocketWrapper::transfer_ready_read() // SLOT
       send_chunk_ACK();
       m_socket.flush();
       m_socket.waitForBytesWritten(2000); // We were no longer accepting bytes anyway
+      qDebug() << "[transfer_ready_read] File correctly received";
       m_socket.disconnectFromHost();
       m_parent.exit(0);
       return;

@@ -368,8 +368,8 @@ void MainWindow::initialize_servers()
 
   qDebug() << "[initialize_server] Service server now listening on port " << m_service_port;
 
-  m_transfer_listener = std::make_unique<TransferListener>(std::bind(&MainWindow::my_transfer_retriever, this,
-                                                                     std::placeholders::_1, std::placeholders::_2));
+  m_transfer_listener = std::make_unique<TransferListener>(this, std::bind(&MainWindow::my_transfer_retriever, this,
+                                                                           std::placeholders::_1, std::placeholders::_2));
 
   m_transfer_listener->set_transfer_port(m_transfer_port);
   m_transfer_listener->moveToThread(m_transfer_listener.get());
@@ -383,7 +383,7 @@ void MainWindow::initialize_peers_ping()
   // Ping all peers asynchronously at regular intervals while this window is on
   m_peers_ping_timer = std::make_unique<QTimer>(this);
   connect(m_peers_ping_timer.get(), SIGNAL(timeout()), this, SLOT(ping_peers()));
-  m_peers_ping_timer->start(5000);
+  m_peers_ping_timer->start(1000);
 }
 
 QString MainWindow::get_local_address()
@@ -446,7 +446,7 @@ bool MainWindow::my_transfer_retriever(TransferRequest& req, DynamicTreeWidgetIt
     if (el.m_unique_id == req.m_unique_id)
     {
       req = el;
-      item_ptr = (DynamicTreeWidgetItem*)m_sentView->itemAt(0, index);
+      item_ptr = (DynamicTreeWidgetItem*)m_sentView->topLevelItem(index);
       return true;
     }
     ++index;
@@ -628,7 +628,7 @@ void MainWindow::listview_transfer_accepted(QModelIndex index) // SLOT
   TransferStarter *ts = new TransferStarter(req, form_local_destination_file(req));
   connect(ts, SIGNAL(finished()), ts, SLOT(deleteLater()));
 
-  DynamicTreeWidgetItem *item = (DynamicTreeWidgetItem*)m_receivedView->itemAt(index.column(), index.row());
+  DynamicTreeWidgetItem *item = (DynamicTreeWidgetItem*)m_receivedView->topLevelItem(index.row());
   connect(ts, SIGNAL(update_percentage(int)), item, SLOT(update_percentage(int)));
 
   ts->start();
