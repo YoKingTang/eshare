@@ -12,10 +12,7 @@ public:
 
 public slots:
 
-  // Updates percentage data
-  void filePercentage(int value);
-  // Updates destination data (only for server items)
-  void destinationAvailable(QString destination);
+  void update_percentage(int value);
 };
 
 #endif // DYNAMICTREEWIDGETITEM_H

@@ -27,6 +27,8 @@ StarterSocketWrapper::StarterSocketWrapper(TransferStarter& parent) :
     return;
   }
 
+  connect(this, SIGNAL(update_percentage(int)), &m_parent, SLOT(update_percentage_slot(int)));
+
   m_socket.connectToHost(parent.m_request.m_sender_address, parent.m_request.m_sender_transfer_port);
 }
 
@@ -91,11 +93,14 @@ void StarterSocketWrapper::transfer_ready_read() // SLOT
     m_bytes_read += chunk.size();
 
     m_chunker->write_next_chunk(chunk);
+    emit update_percentage(((float)m_chunker->get_pos() / (float)m_chunker->get_expected_file_size()) * 100);
 
     if (m_chunker->reached_expected_eof())
     {
       // Transfer finished
+      emit update_percentage(100);
       send_chunk_ACK();
+      m_socket.waitForBytesWritten(2000); // We were no longer accepting bytes anyway
       m_socket.disconnectFromHost();
       m_parent.exit(0);
       return;
@@ -119,4 +124,9 @@ void TransferStarter::run() // Main thread entry point
   std::unique_ptr<StarterSocketWrapper> m_sw = std::make_unique<StarterSocketWrapper>(*this);
 
   this->exec();
+}
+
+void TransferStarter::update_percentage_slot(int value) // SLOT
+{
+  emit update_percentage(value);
 }

@@ -1,6 +1,7 @@
 #ifndef REQUESTLISTENER_H
 #define REQUESTLISTENER_H
 
+#include <UI/DynamicTreeWidgetItem.h>
 #include <Data/TransferRequest.h>
 #include <QThread>
 #include <QTcpServer>
@@ -22,7 +23,6 @@ private:
   TransferListener& m_parent;
 
   QTcpServer m_server;
-  QSet<QTcpSocket*> m_connections;
 
 private slots:
   void new_transfer_connection();
@@ -36,14 +36,14 @@ class TransferListener : public QThread {
   friend class ListenerSocketWrapper;
 public:
 
-  TransferListener(std::function<bool(TransferRequest&)> trans_retriever);
+  TransferListener(std::function<bool(TransferRequest&, DynamicTreeWidgetItem*&)> trans_retriever);
 
   void set_transfer_port(int local_transfer_port);
 
 private:
   void run() Q_DECL_OVERRIDE;
 
-  std::function<bool(TransferRequest&)> m_trans_retriever; // Needs to be thread-safe
+  std::function<bool(TransferRequest&, DynamicTreeWidgetItem*&)> m_trans_retriever; // Needs to be thread-safe
 
   int m_local_transfer_port = 67;
 };

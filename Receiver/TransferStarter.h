@@ -35,6 +35,9 @@ private slots:
   void socket_error(QAbstractSocket::SocketError err);
   void transfer_bytes_written(qint64);
   void transfer_ready_read();
+
+signals:
+  void update_percentage(int);
 };
 
 class TransferStarter : public QThread {
@@ -52,6 +55,11 @@ private:
   TransferRequest m_request;
   QString         m_local_file;
 
+private slots:
+  void update_percentage_slot(int value);
+
+signals:
+  void update_percentage(int);
 };
 
 #endif // TRANSFERSTARTER_H

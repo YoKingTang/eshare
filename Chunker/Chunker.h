@@ -19,7 +19,9 @@ public:
   void close();
   bool reached_eof() const;
 
+  qint64 get_pos() const;
   qint64 get_file_size() const;
+  qint64 get_expected_file_size() const;
   bool reached_expected_eof() const;
   qint64 get_next_chunk_size() const;
   // Get a filesize in human-readable form, e.g. 1.2 GB

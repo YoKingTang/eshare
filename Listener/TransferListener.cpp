@@ -39,8 +39,6 @@ void ListenerSocketWrapper::new_transfer_connection() // SLOT
             this, SLOT(socket_error(QAbstractSocket::SocketError)));
 
   new_socket_connection->setProperty("status", "needs_identification");
-
-  m_connections.insert(new_socket_connection);
 }
 
 void ListenerSocketWrapper::socket_ready_read() // SLOT
@@ -63,7 +61,8 @@ void ListenerSocketWrapper::socket_ready_read() // SLOT
     TransferRequest req;
     req.m_unique_id = req_id;
 
-    if (!m_parent.m_trans_retriever(req))
+    DynamicTreeWidgetItem *associated_item = nullptr;
+    if (!m_parent.m_trans_retriever(req, associated_item))
     {
       qDebug() << "[socket_ready_read] Error: we were given permission for a transfer we didn't ask";
       socket->abort();
@@ -77,6 +76,7 @@ void ListenerSocketWrapper::socket_ready_read() // SLOT
     }
 
     connect(socket, SIGNAL(disconnected()), chunker, SLOT(deleteLater()));
+    socket->setProperty("listview_item", QVariant::fromValue(associated_item));
     socket->setProperty("chunker", QVariant::fromValue(chunker));
 
     socket->setProperty("status", "awaiting_chunk_ack");
@@ -102,13 +102,18 @@ void ListenerSocketWrapper::socket_ready_read() // SLOT
     if (ack == "ACK_CHUNK")
     {
       Chunker *chunker = socket->property("chunker").value<Chunker*>();
+      DynamicTreeWidgetItem *listview_item = socket->property("listview_item").value<DynamicTreeWidgetItem*>();
 
       if (chunker->reached_eof())
       {
         // Transfer finished
+        QMetaObject::invokeMethod(listview_item, "update_percentage", Q_ARG(int, 100));
         socket->disconnectFromHost();
         return;
       }
+
+      if (listview_item)
+        QMetaObject::invokeMethod(listview_item, "update_percentage", Q_ARG(int, ((float)chunker->get_pos() / (float)chunker->get_file_size()) * 100));
 
       CHECK_SOCKET_IO_SUCCESS(socket->write(chunker->read_next_chunk()));
     }
@@ -129,7 +134,7 @@ void ListenerSocketWrapper::socket_error(QAbstractSocket::SocketError err) // SL
   socket->abort();
 }
 
-TransferListener::TransferListener(std::function<bool(TransferRequest&)> trans_retriever) :
+TransferListener::TransferListener(std::function<bool(TransferRequest&, DynamicTreeWidgetItem*&)> trans_retriever) :
   m_trans_retriever(trans_retriever)
 {}
 

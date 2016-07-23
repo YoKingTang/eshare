@@ -274,7 +274,8 @@ void MainWindow::initialize_servers()
 
   qDebug() << "[initialize_server] Service server now listening on port " << m_service_port;
 
-  m_transfer_listener = std::make_unique<TransferListener>(std::bind(&MainWindow::my_transfer_retriever, this, std::placeholders::_1));
+  m_transfer_listener = std::make_unique<TransferListener>(std::bind(&MainWindow::my_transfer_retriever, this,
+                                                                     std::placeholders::_1, std::placeholders::_2));
 
   m_transfer_listener->set_transfer_port(m_transfer_port);
   m_transfer_listener->moveToThread(m_transfer_listener.get());
@@ -309,6 +310,7 @@ void MainWindow::add_new_external_transfer_request(TransferRequest req)
   item->setFlags(item->flags() & ~Qt::ItemIsEditable);
   item->setTextAlignment(1, Qt::AlignHCenter);
 
+  // TODO connect(&transferThread, SIGNAL(update_percentage(int)), item, SLOT(update_percentage(int)));
 }
 
 void MainWindow::add_new_my_transfer_request(TransferRequest req)
@@ -329,16 +331,19 @@ void MainWindow::add_new_my_transfer_request(TransferRequest req)
   item->setTextAlignment(1, Qt::AlignHCenter);
 }
 
-bool MainWindow::my_transfer_retriever(TransferRequest& req)
+bool MainWindow::my_transfer_retriever(TransferRequest& req, DynamicTreeWidgetItem *& item_ptr)
 {
   QMutexLocker lock(&m_my_transfer_requests_mutex);
+  int index = 0;
   for(auto& el : m_my_transfer_requests)
   {
     if (el.m_unique_id == req.m_unique_id)
     {
       req = el;
+      item_ptr = (DynamicTreeWidgetItem*)m_sentView->itemAt(0, index);
       return true;
     }
+    ++index;
   }
   return false;
 }
@@ -470,6 +475,9 @@ void MainWindow::listview_transfer_accepted(QModelIndex index) // SLOT
 
   TransferStarter *ts = new TransferStarter(req, form_local_destination_file(req));
   connect(ts, SIGNAL(finished()), ts, SLOT(deleteLater()));
+
+  DynamicTreeWidgetItem *item = (DynamicTreeWidgetItem*)m_receivedView->itemAt(index.column(), index.row());
+  connect(ts, SIGNAL(update_percentage(int)), item, SLOT(update_percentage(int)));
 
   ts->start();
 }

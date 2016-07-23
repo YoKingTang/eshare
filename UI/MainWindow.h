@@ -73,7 +73,8 @@ private:
 
     // Transfer server for incoming pending requests
     std::unique_ptr<TransferListener> m_transfer_listener;
-    bool my_transfer_retriever(TransferRequest& req); // Retrieves a 'my transfer' request from the id
+    // Retrieves a 'my transfer' request from the id. Also retrieves the associated listview item pointer
+    bool my_transfer_retriever(TransferRequest& req, DynamicTreeWidgetItem *&item_ptr);
 
     QString form_local_destination_file(TransferRequest& req);
 

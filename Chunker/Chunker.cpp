@@ -42,6 +42,14 @@ qint64 Chunker::get_file_size() const
   return m_file.size();
 }
 
+qint64 Chunker::get_expected_file_size() const
+{
+  if (m_mode != RECEIVER)
+    qDebug() << "[get_expected_file_size] Warning: calling receiver function from sender mode";
+
+  return m_expected_size;
+}
+
 bool Chunker::reached_expected_eof() const
 {
   if (m_mode != RECEIVER)
@@ -83,6 +91,14 @@ qint64 Chunker::chunk_size() const
 bool Chunker::reached_eof() const
 {
   return m_file.atEnd();
+}
+
+qint64 Chunker::get_pos() const
+{
+  if (!is_open())
+    return 0;
+
+  return m_file.pos();
 }
 
 QByteArray Chunker::read_next_chunk()
