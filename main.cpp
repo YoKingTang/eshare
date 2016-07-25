@@ -29,8 +29,9 @@ void myMessageOutput(QtMsgType type, const QMessageLogContext &context, const QS
 
 int main(int argc, char *argv[])
 {
-    //qInstallMessageHandler(myMessageOutput); //install : set the callback
+    // qInstallMessageHandler(myMessageOutput); //install : set the callback
     QApplication a(argc, argv);
+    QGuiApplication::setApplicationDisplayName("eKAshare");
     MainWindow w;
     w.show();
 

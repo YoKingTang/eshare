@@ -4,6 +4,9 @@
 #include <UI/DynamicTreeWidgetItem.h>
 #include <UI/DynamicTreeWidgetItemDelegate.h>
 #include <Receiver/TransferStarter.h>
+#include <QNetworkConfigurationManager>
+#include <QNetworkSession>
+#include <QSettings>
 #include <QTreeWidget>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -29,7 +32,7 @@ MainWindow::MainWindow(QWidget *parent) :
 {
     ui->setupUi(this);
 
-    this->setWindowTitle("eKAshare");
+    this->setWindowTitle("Control panel");
     this->setAcceptDrops(true);
 
     QHBoxLayout *hbox = new QHBoxLayout; // Main layout
@@ -117,12 +120,41 @@ MainWindow::MainWindow(QWidget *parent) :
 
     ui->centralWidget->setLayout(hbox);
 
-    // Continue initialization
+    // Continue with non-UI initialization
 
     m_default_download_path = QDir::currentPath();
+
     initialize_peers();
-    initialize_servers();
-    initialize_peers_ping();
+
+    // Network initialization
+    QNetworkConfigurationManager manager;
+    if (manager.capabilities() & QNetworkConfigurationManager::NetworkSessionRequired) {
+        // Get saved network configuration
+        QSettings settings(QSettings::UserScope, QLatin1String("eshare"));
+        settings.beginGroup(QLatin1String("QtNetwork"));
+        const QString id = settings.value(QLatin1String("DefaultNetworkConfiguration")).toString();
+        settings.endGroup();
+
+        // If the saved network configuration is not currently discovered use the system default
+        QNetworkConfiguration config = manager.configurationFromIdentifier(id);
+        if ((config.state() & QNetworkConfiguration::Discovered) != QNetworkConfiguration::Discovered) {
+            config = manager.defaultConfiguration();
+        }
+
+        m_network_session = new QNetworkSession(config, this);
+        connect(m_network_session, &QNetworkSession::opened, this, &MainWindow::network_session_opened);
+        connect(m_network_session, static_cast<void(QNetworkSession::*)(QNetworkSession::SessionError)>(&QNetworkSession::error),
+              [&](QNetworkSession::SessionError){
+          QMessageBox::critical(this, tr("Errore di rete"),
+                                tr("Impossibile inizializzare il gestore di interfacce di rete: '%1'")
+                                .arg(m_network_session->errorString()));
+          exit(1); // Cannot recover
+        });
+
+        m_network_session->open();
+    }
+    else
+        network_session_opened();
 }
 
 MainWindow::~MainWindow()
@@ -132,6 +164,28 @@ MainWindow::~MainWindow()
   if (m_peers_ping_timer)
     m_peers_ping_timer->stop();
   delete ui;
+}
+
+void MainWindow::network_session_opened() // SLOT
+{
+  // Save the used configuration
+  if (m_network_session) {
+      QNetworkConfiguration config = m_network_session->configuration();
+      QString id;
+      if (config.type() == QNetworkConfiguration::UserChoice)
+          id = m_network_session->sessionProperty(QLatin1String("UserChoiceConfiguration")).toString();
+      else
+          id = config.identifier();
+
+      QSettings settings(QSettings::UserScope, QLatin1String("eshare"));
+      settings.beginGroup(QLatin1String("QtNetwork"));
+      settings.setValue(QLatin1String("DefaultNetworkConfiguration"), id);
+      settings.endGroup();
+  }
+
+  // Perform last initialization steps
+  initialize_servers();
+  initialize_peers_ping();
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent *event)
@@ -356,7 +410,7 @@ void MainWindow::initialize_peers()
 
 void MainWindow::initialize_servers()
 {
-  if (!m_service_server.listen(QHostAddress::LocalHost, m_service_port))
+  if (!m_service_server.listen(QHostAddress::Any, m_service_port))
   {
     QMessageBox::critical(this, tr("Server"),
                           tr("Errore durante l'inizializzazione del service server: '%1'\n\nL'applicazione sara' chiusa.")
@@ -383,16 +437,16 @@ void MainWindow::initialize_peers_ping()
   // Ping all peers asynchronously at regular intervals while this window is on
   m_peers_ping_timer = std::make_unique<QTimer>(this);
   connect(m_peers_ping_timer.get(), SIGNAL(timeout()), this, SLOT(ping_peers()));
-  m_peers_ping_timer->start(1000);
+  m_peers_ping_timer->start(10000);
 }
 
 QString MainWindow::get_local_address()
 {
-//  foreach (const QHostAddress &address, QNetworkInterface::allAddresses()) {
-//    if (address.protocol() == QAbstractSocket::IPv4Protocol && address != QHostAddress(QHostAddress::LocalHost))
-//      return address.toString();
-//  }
-//  qDebug() << "[get_local_address] Could not determine local address";
+  foreach (const QHostAddress &address, QNetworkInterface::allAddresses()) {
+    if (address.protocol() == QAbstractSocket::IPv4Protocol && address != QHostAddress(QHostAddress::LocalHost))
+      return address.toString();
+  }
+  qDebug() << "[get_local_address] Could not determine local address";
   return QString("127.0.0.1");
 }
 
@@ -408,8 +462,7 @@ void MainWindow::add_new_external_transfer_requests(QVector<TransferRequest> req
 
     // item->setText(0, "0"); // Progress styled by delegate
     item->setText(1, get_peer_name_from_address(request.m_sender_address)); // Sender
-    QString destinationFile = request.m_file_path;
-    item->setText(2, destinationFile); // Destination (local file written)
+    item->setText(2, form_local_destination_file(request)); // Destination (local file written)
 
     item->setFlags(item->flags() & ~Qt::ItemIsEditable);
     item->setTextAlignment(1, Qt::AlignHCenter);
@@ -666,17 +719,19 @@ void MainWindow::ping_peers() // SLOT
             ping_socket, &QObject::deleteLater);
 
     ping_socket->connectToHost(ip, service_port);
+    qDebug() << "Trying to connect to " << ip << " on " << service_port;
 
     ++index;
   }
 }
 
-void MainWindow::ping_failed(QAbstractSocket::SocketError) // SLOT
+void MainWindow::ping_failed(QAbstractSocket::SocketError err) // SLOT
 {
   QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
   auto peer_id = socket->property("peer_id").toInt();
 
   m_peer_online[peer_id] = false;
+  qDebug() << "Ping failed for " << peer_id << " with " << err;
 
   auto item = m_peersView->topLevelItem(peer_id);
   item->setIcon(0, QIcon(":Res/red_light.png"));
@@ -687,6 +742,8 @@ void MainWindow::ping_failed(QAbstractSocket::SocketError) // SLOT
 void MainWindow::ping_socket_connected() // SLOT
 {
   QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
+
+  qDebug() << "CONNECTED PING";
 
   QByteArray block;
   QDataStream out(&block, QIODevice::WriteOnly);

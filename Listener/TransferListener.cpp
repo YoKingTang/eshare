@@ -19,7 +19,7 @@ ListenerSocketWrapper::ListenerSocketWrapper(TransferListener& parent) :
 {
   connect(&m_server, SIGNAL(newConnection()), this, SLOT(new_transfer_connection()));
 
-  if (!m_server.listen(QHostAddress::LocalHost, m_parent.m_local_transfer_port))
+  if (!m_server.listen(QHostAddress::Any, m_parent.m_local_transfer_port))
   {
     QMessageBox::critical(nullptr, tr("Server"),
                           tr("Errore durante l'inizializzazione del transfer server: '%1'\n\nL'applicazione sara' chiusa.")

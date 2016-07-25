@@ -19,6 +19,10 @@ namespace Ui {
 class PeersView;
 class TransfersView;
 
+QT_BEGIN_NAMESPACE
+class QNetworkSession;
+QT_END_NAMESPACE
+
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -35,6 +39,7 @@ protected:
 
 private:
     Ui::MainWindow *ui;
+    QNetworkSession *m_network_session = nullptr;
 
     TransferTreeView *m_sentView;
     TransferTreeView *m_receivedView;
@@ -103,9 +108,10 @@ private slots:
     void listview_transfer_accepted(QModelIndex index);
 
     void ping_peers();
-    void ping_failed(QAbstractSocket::SocketError);
+    void ping_failed(QAbstractSocket::SocketError err);
     void ping_socket_connected();
     void ping_socket_ready_read();
+    void network_session_opened();
 };
 
 #endif // MAINWINDOW_H
