@@ -4,5 +4,6 @@
         <file>Res/check_mark.png</file>
         <file>Res/green_light.png</file>
         <file>Res/red_light.png</file>
+        <file>Res/ekashare_icon.png</file>
     </qresource>
 </RCC>

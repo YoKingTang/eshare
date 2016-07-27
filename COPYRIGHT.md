@@ -3,3 +3,4 @@ Icon resources:
     Authors:
         - OCHA
         - Pavel Kozlov
+        - Madebyoliver

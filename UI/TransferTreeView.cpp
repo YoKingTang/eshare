@@ -30,8 +30,19 @@ bool TransferTreeView::TransferTreeView::eventFilter(QObject *obj, QEvent *event
   return QWidget::eventFilter(obj, event);
 }
 
-void TransferTreeView::clicked(const QModelIndex item) { // SLOT
+void TransferTreeView::clicked(const QModelIndex item) // SLOT
+{
   // Set style to progressbar
   this->model()->setData(item, false, Qt::UserRole + 0);
   emit click(item); // Forward on
+}
+
+void TransferTreeView::resetDelegate()
+{
+  if (m_delegate)
+    delete m_delegate;
+  m_delegate = new DynamicTreeWidgetItemDelegate(this);
+  connect(m_delegate, SIGNAL(needsUpdate(const QModelIndex&)), this, SLOT(update(const QModelIndex&)));
+  connect(m_delegate, SIGNAL(clicked(const QModelIndex)), this, SLOT(clicked(const QModelIndex)));
+  this->setItemDelegate(m_delegate);
 }

@@ -11,6 +11,8 @@ class TransferTreeView : public QTreeWidget
 public:
     TransferTreeView(QWidget*parent);
 
+    void resetDelegate();
+
 private:
     bool eventFilter(QObject *obj, QEvent *event);
 

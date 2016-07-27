@@ -6,9 +6,11 @@
 #include <Receiver/TransferStarter.h>
 #include <QNetworkConfigurationManager>
 #include <QNetworkSession>
+#include <QPushButton>
 #include <QSettings>
 #include <QTreeWidget>
 #include <QGroupBox>
+#include <QLabel>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QMessageBox>
@@ -32,7 +34,8 @@ MainWindow::MainWindow(QWidget *parent) :
 {
     ui->setupUi(this);
 
-    this->setWindowTitle("Control panel");
+    this->setWindowTitle("Pannello di controllo");
+    this->setWindowIcon(QIcon(":/Res/ekashare_icon.png"));
     this->setAcceptDrops(true);
 
     QHBoxLayout *hbox = new QHBoxLayout; // Main layout
@@ -60,8 +63,13 @@ MainWindow::MainWindow(QWidget *parent) :
           m_sentView->setAlternatingRowColors(true);
           m_sentView->setRootIsDecorated(false);
 
+          QPushButton *clear_button = new QPushButton(this);
+          clear_button->setText("Cancella Inviati");
+          connect(clear_button, SIGNAL(clicked(bool)), SLOT(clear_sent(bool)));
+
           QVBoxLayout *vbox = new QVBoxLayout;
           vbox->addWidget(m_sentView);
+          vbox->addWidget(clear_button);
 
           sentGB->setLayout(vbox);
       }
@@ -80,8 +88,13 @@ MainWindow::MainWindow(QWidget *parent) :
           m_receivedView->setRootIsDecorated(false);
           connect(m_receivedView, SIGNAL(click(QModelIndex)), this, SLOT(listview_transfer_accepted(QModelIndex)));
 
+          QPushButton *clear_button = new QPushButton(this);
+          clear_button->setText("Cancella Ricevuti");
+          connect(clear_button, SIGNAL(clicked(bool)), SLOT(clear_received(bool)));
+
           QVBoxLayout *vbox = new QVBoxLayout;
           vbox->addWidget(m_receivedView);
+          vbox->addWidget(clear_button);
 
           receivedGB->setLayout(vbox);
       }
@@ -101,7 +114,6 @@ MainWindow::MainWindow(QWidget *parent) :
         QStringList headers;
         headers << tr("") << tr("");
 
-        //m_peersView->setItemDelegate(new PeersViewDelegate(this));
         m_peersView->setHeaderLabels(headers);
         m_peersView->resizeColumnToContents(0);
         m_peersView->header()->close();
@@ -113,12 +125,24 @@ MainWindow::MainWindow(QWidget *parent) :
         vbox->addWidget(m_peersView);
 
         onlineGB->setLayout(vbox);
+
+        {
+          QPixmap eka(":/Res/ekashare_icon.png");
+          QLabel *ekaImg = new QLabel(this);
+          ekaImg->setPixmap(eka);
+          ekaImg->setAlignment(Qt::AlignCenter);
+
+          vbox->addWidget(ekaImg);
+        }
       }
 
       hbox->addWidget(onlineGB);
     }
 
     ui->centralWidget->setLayout(hbox);
+
+    initialize_tray_icon();
+    m_tray_icon->show();
 
     // Continue with non-UI initialization
 
@@ -186,6 +210,118 @@ void MainWindow::network_session_opened() // SLOT
   // Perform last initialization steps
   initialize_servers();
   initialize_peers_ping();
+}
+
+void MainWindow::clear_sent(bool) // SLOT
+{
+  bool pending_uncompleted = false;
+
+  {
+    QMutexLocker lock(&m_my_transfer_requests_mutex);
+    for(int i = 0; i < m_my_transfer_requests.size(); ++i)
+    {
+      int value = m_sentView->topLevelItem(i)->data(2, Qt::UserRole + 2).toInt();
+      if (value != 100)
+      {
+        pending_uncompleted = true;
+        break;
+      }
+    }
+    if (!pending_uncompleted)
+    {
+      // No pending sent requests, just clear
+      m_sentView->clear();
+      m_sentView->resetDelegate();
+      m_my_transfer_requests.clear();
+      return;
+    }
+  }
+  auto reply = QMessageBox::question(this, "Conferma di cancellazione", "Ci sono trasferimenti inviati non ancora"
+                                     "completati. Si vuole cancellare lo stesso tutti i trasferimenti inviati?\n"
+                                     "(I destinatari non saranno in grado di completare un trasferimento annullato)",
+                                     QMessageBox::Yes | QMessageBox::No);
+  if (reply == QMessageBox::Yes)
+  {
+    QMutexLocker lock(&m_my_transfer_requests_mutex);
+    m_sentView->clear();
+    m_sentView->resetDelegate();
+    m_my_transfer_requests.clear();
+  }
+}
+
+void MainWindow::clear_received(bool) // SLOT
+{
+  bool pending_uncompleted = false;
+
+  {
+    for(int i = 0; i < m_external_transfer_requests.size(); ++i)
+    {
+      int value = m_receivedView->topLevelItem(i)->data(2, Qt::UserRole + 2).toInt();
+      if (value != 100)
+      {
+        pending_uncompleted = true;
+        break;
+      }
+    }
+    if (!pending_uncompleted)
+    {
+      // No pending sent requests, just clear
+      m_receivedView->clear();
+      m_receivedView->resetDelegate();
+      m_external_transfer_requests.clear();
+      return;
+    }
+  }
+  auto reply = QMessageBox::question(this, "Conferma di cancellazione", "Ci sono trasferimenti ricevuti non ancora"
+                                     "completati. Si vuole cancellare lo stesso tutti i trasferimenti ricevuti?\n"
+                                     "(I mittenti non saranno in grado di completare un trasferimento annullato)",
+                                     QMessageBox::Yes | QMessageBox::No);
+  if (reply == QMessageBox::Yes)
+  {
+    m_receivedView->clear();
+    m_receivedView->resetDelegate();
+    m_external_transfer_requests.clear();
+  }
+}
+
+void MainWindow::initialize_tray_icon()
+{
+  m_open_action = new QAction(tr("&Apri Pannello di Controllo"), this);
+  connect(m_open_action, &QAction::triggered, this, &QWidget::showNormal);
+
+  m_quit_action = new QAction(tr("&Esci"), this);
+  connect(m_quit_action, &QAction::triggered, qApp, &QCoreApplication::quit);
+
+  m_tray_icon_menu = new QMenu(this);
+  m_tray_icon_menu->addAction(m_open_action);
+  m_tray_icon_menu->addSeparator();
+  m_tray_icon_menu->addAction(m_quit_action);
+
+  m_tray_icon = new QSystemTrayIcon(this);
+  m_tray_icon->setContextMenu(m_tray_icon_menu);
+  m_tray_icon->setIcon(QIcon(":/Res/ekashare_icon.png"));
+  m_tray_icon->setToolTip("eKAshare");
+
+  // Handle double click messages
+  connect(m_tray_icon, SIGNAL(activated(QSystemTrayIcon::ActivationReason)),
+          this, SLOT(tray_icon_activated(QSystemTrayIcon::ActivationReason)));
+
+  connect(m_tray_icon, &QSystemTrayIcon::messageClicked,
+          this, [&](){
+                      this->showNormal();
+                    });
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+  event->ignore();
+  this->hide();
+}
+
+void MainWindow::tray_icon_activated(QSystemTrayIcon::ActivationReason reason) // SLOT
+{
+  if (reason == QSystemTrayIcon::DoubleClick)
+    this->showNormal();
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent *event)
@@ -452,6 +588,8 @@ QString MainWindow::get_local_address()
 
 void MainWindow::add_new_external_transfer_requests(QVector<TransferRequest> reqs)
 {
+  qint64 total_size = 0;
+
   for(auto& request : reqs)
   {
     m_external_transfer_requests.append(request);
@@ -459,6 +597,7 @@ void MainWindow::add_new_external_transfer_requests(QVector<TransferRequest> req
     DynamicTreeWidgetItem *item = new DynamicTreeWidgetItem(m_receivedView);
 
     item->setData(0, Qt::UserRole + 0, true); // Start with accept button
+    item->setData(0, Qt::UserRole + 2, 0); // Progressbar 0%
 
     // item->setText(0, "0"); // Progress styled by delegate
     item->setText(1, get_peer_name_from_address(request.m_sender_address)); // Sender
@@ -466,7 +605,24 @@ void MainWindow::add_new_external_transfer_requests(QVector<TransferRequest> req
 
     item->setFlags(item->flags() & ~Qt::ItemIsEditable);
     item->setTextAlignment(1, Qt::AlignHCenter);
+
+    total_size += request.m_size;
   }
+
+  QString info_text;
+  QTextStream stream(&info_text);
+  stream << "Ricevuta richiesta di trasferimento per ";
+  if (reqs.size() > 1)
+    stream << reqs.size() << " files (";
+  else
+    stream << " 1 file (";
+
+  stream << Chunker::format_size_human(total_size);
+  stream << ") da \n\t" << get_peer_name_from_address(reqs.first().m_sender_address) << " @ "
+         << reqs.first().m_sender_address << "\n";
+
+  stream.flush();
+  m_tray_icon->showMessage("eKAshare", info_text, QSystemTrayIcon::Information, 2000);
 }
 
 void MainWindow::add_new_my_transfer_requests(QVector<TransferRequest> reqs)
@@ -479,6 +635,7 @@ void MainWindow::add_new_my_transfer_requests(QVector<TransferRequest> reqs)
     DynamicTreeWidgetItem *item = new DynamicTreeWidgetItem(m_sentView);
 
     item->setData(0, Qt::UserRole + 0, false); // Start with progress bar - no control on sent
+    item->setData(0, Qt::UserRole + 2, 0); // Progressbar 0%
 
     // item->setText(0, "0"); // Progress styled by delegate
     item->setText(1, get_peer_name_from_address(req.m_sender_address)); // Sender
@@ -719,7 +876,6 @@ void MainWindow::ping_peers() // SLOT
             ping_socket, &QObject::deleteLater);
 
     ping_socket->connectToHost(ip, service_port);
-    qDebug() << "Trying to connect to " << ip << " on " << service_port;
 
     ++index;
   }
@@ -727,11 +883,11 @@ void MainWindow::ping_peers() // SLOT
 
 void MainWindow::ping_failed(QAbstractSocket::SocketError err) // SLOT
 {
+  (void)err;
   QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
   auto peer_id = socket->property("peer_id").toInt();
 
   m_peer_online[peer_id] = false;
-  qDebug() << "Ping failed for " << peer_id << " with " << err;
 
   auto item = m_peersView->topLevelItem(peer_id);
   item->setIcon(0, QIcon(":Res/red_light.png"));
@@ -742,8 +898,6 @@ void MainWindow::ping_failed(QAbstractSocket::SocketError err) // SLOT
 void MainWindow::ping_socket_connected() // SLOT
 {
   QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
-
-  qDebug() << "CONNECTED PING";
 
   QByteArray block;
   QDataStream out(&block, QIODevice::WriteOnly);

@@ -5,6 +5,8 @@
 #include <UI/TransferTreeView.h>
 #include <Listener/TransferListener.h>
 #include <QMainWindow>
+#include <QSystemTrayIcon>
+#include <QMenu>
 #include <QMutex>
 #include <QVector>
 #include <QTcpServer>
@@ -88,6 +90,7 @@ private:
     QVector<TransferRequest> m_my_transfer_requests;
     void add_new_my_transfer_requests(QVector<TransferRequest> reqs);
     QVector<TransferRequest> m_my_pending_requests_to_send; // Temporary storage for requests not yet sent
+                                                            // during drag/drop event processing
 
     // Transfer server for incoming pending requests
     std::unique_ptr<TransferListener> m_transfer_listener;
@@ -112,6 +115,24 @@ private slots:
     void ping_socket_connected();
     void ping_socket_ready_read();
     void network_session_opened();
+
+    void clear_sent(bool);
+    void clear_received(bool);
+
+private:
+
+    QSystemTrayIcon *m_tray_icon = nullptr;
+    void initialize_tray_icon();
+
+    QMenu *m_tray_icon_menu = nullptr;
+      QAction *m_open_action = nullptr;
+      QAction *m_quit_action = nullptr;
+
+    void closeEvent(QCloseEvent *event) Q_DECL_OVERRIDE;
+
+private slots:
+    void tray_icon_activated(QSystemTrayIcon::ActivationReason reason);
+
 };
 
 #endif // MAINWINDOW_H
