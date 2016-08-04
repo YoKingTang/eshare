@@ -28,6 +28,10 @@
 #include <QFileInfo>
 #include <functional>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 MainWindow::MainWindow(QWidget *parent) :
     QMainWindow(parent),
     ui(new Ui::MainWindow)
@@ -127,12 +131,27 @@ MainWindow::MainWindow(QWidget *parent) :
         onlineGB->setLayout(vbox);
 
         {
-          QPixmap eka(":/Res/ekashare_icon.png");
-          QLabel *ekaImg = new QLabel(this);
-          ekaImg->setPixmap(eka);
-          ekaImg->setAlignment(Qt::AlignCenter);
+          QWidget *horizontalWidget = new QWidget(this);
+          QHBoxLayout *hlayout = new QHBoxLayout(this);
+          horizontalWidget->setLayout(hlayout);
 
-          vbox->addWidget(ekaImg);
+          QPixmap eka(":/Res/ekashare_icon.png");
+          QPushButton *ekaBtn = new QPushButton(this);
+          QIcon ekaIcon = QIcon(eka);
+          ekaBtn->setIcon(ekaIcon);
+          ekaBtn->setFixedSize(ekaIcon.actualSize(ekaIcon.availableSizes().first()));
+          ekaBtn->setText("");
+          ekaBtn->setIconSize(ekaIcon.availableSizes().first());
+          ekaBtn->setFlat(true);
+
+          connect(ekaBtn, &QPushButton::clicked, this, [&](bool) {
+            QMessageBox::information(this, tr("eKAshare"),
+                                  tr("File transfer utility\nCopyright © EKA srl - For internal use only"));
+          });
+
+          hlayout->addWidget(ekaBtn);
+
+          vbox->addWidget(horizontalWidget);
         }
       }
 
@@ -147,6 +166,10 @@ MainWindow::MainWindow(QWidget *parent) :
     // Continue with non-UI initialization
 
     m_default_download_path = QDir::currentPath();
+
+#ifdef _WIN32
+    RegisterHotKey((HWND)this->winId(), 1, MOD_CONTROL | MOD_NOREPEAT, /* B key */0x42);
+#endif
 
     initialize_peers();
 
@@ -284,10 +307,23 @@ void MainWindow::clear_received(bool) // SLOT
   }
 }
 
+void MainWindow::hide_main_window() // SLOT
+{
+  m_peers_ping_timer->stop();
+  this->hide();
+}
+
+void MainWindow::show_main_window() // SLOT
+{
+  ping_peers(); // Immediately ping peers, then with a delay
+  m_peers_ping_timer->start();
+  this->showNormal();
+}
+
 void MainWindow::initialize_tray_icon()
 {
   m_open_action = new QAction(tr("&Apri Pannello di Controllo"), this);
-  connect(m_open_action, &QAction::triggered, this, &QWidget::showNormal);
+  connect(m_open_action, &QAction::triggered, this, &MainWindow::show_main_window);
 
   m_quit_action = new QAction(tr("&Esci"), this);
   connect(m_quit_action, &QAction::triggered, qApp, &QCoreApplication::quit);
@@ -307,21 +343,49 @@ void MainWindow::initialize_tray_icon()
           this, SLOT(tray_icon_activated(QSystemTrayIcon::ActivationReason)));
 
   connect(m_tray_icon, &QSystemTrayIcon::messageClicked,
-          this, [&](){
-                      this->showNormal();
-                    });
+          this, [&](){                      
+                        show_main_window();
+                     });
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
   event->ignore();
-  this->hide();
+  hide_main_window();
+}
+
+bool MainWindow::nativeEvent(const QByteArray&, void *msg, long *result)
+{
+#ifdef _WIN32
+  MSG *message = static_cast<MSG *>( msg );
+
+  switch (message->message)
+  {
+    case WM_HOTKEY:
+    {
+      if (message->wParam == 1)
+      {
+        // Activated Ctrl + B hotkey
+        if (!this->isVisible())
+          show_main_window();
+        else
+          hide_main_window();
+      }
+
+      *result = 0;
+      return true;
+    } break;
+  }
+#endif
+  return false;
 }
 
 void MainWindow::tray_icon_activated(QSystemTrayIcon::ActivationReason reason) // SLOT
 {
   if (reason == QSystemTrayIcon::DoubleClick)
-    this->showNormal();
+  {
+    show_main_window();
+  }
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent *event)
@@ -573,6 +637,7 @@ void MainWindow::initialize_peers_ping()
   // Ping all peers asynchronously at regular intervals while this window is on
   m_peers_ping_timer = std::make_unique<QTimer>(this);
   connect(m_peers_ping_timer.get(), SIGNAL(timeout()), this, SLOT(ping_peers()));
+  ping_peers(); // Ping immediately first, then with a timeout
   m_peers_ping_timer->start(10000);
 }
 

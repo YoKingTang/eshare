@@ -33,7 +33,10 @@ HEADERS  += \
 
 FORMS    += \
             UI/PickReceiver.ui \
-    UI/MainWindow.ui
+            UI/MainWindow.ui
+
+# Windows-only. Needed for Win32 API
+win32:LIBS += -luser32
 
 DISTFILES +=
 

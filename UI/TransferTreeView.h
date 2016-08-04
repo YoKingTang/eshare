@@ -20,6 +20,7 @@ private:
 
 public slots:
     void clicked(const QModelIndex item);
+    void double_clicked(const QModelIndex item);
 
 signals:
     void click(const QModelIndex item);

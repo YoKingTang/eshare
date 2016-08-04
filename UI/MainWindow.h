@@ -119,6 +119,9 @@ private slots:
     void clear_sent(bool);
     void clear_received(bool);
 
+    void hide_main_window();
+    void show_main_window();
+
 private:
 
     QSystemTrayIcon *m_tray_icon = nullptr;
@@ -129,6 +132,7 @@ private:
       QAction *m_quit_action = nullptr;
 
     void closeEvent(QCloseEvent *event) Q_DECL_OVERRIDE;
+    bool nativeEvent(const QByteArray&, void* msg, long* result);
 
 private slots:
     void tray_icon_activated(QSystemTrayIcon::ActivationReason reason);
