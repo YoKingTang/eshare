@@ -54,6 +54,7 @@ private:
     void initialize_peers_ping();
     std::unique_ptr<QTimer> m_peers_ping_timer;
 
+    std::vector<bool> m_peer_answered_last_ping;
     std::vector<bool> m_peer_online;
 public:
     bool is_peer_active(size_t index) const {
@@ -88,7 +89,7 @@ private:
     // All sent pending transfer requests
     QMutex m_my_transfer_requests_mutex;
     QVector<TransferRequest> m_my_transfer_requests;
-    void add_new_my_transfer_requests(QVector<TransferRequest> reqs);
+    void add_new_my_transfer_requests(QString receiver, QVector<TransferRequest> reqs);
     QVector<TransferRequest> m_my_pending_requests_to_send; // Temporary storage for requests not yet sent
                                                             // during drag/drop event processing
 

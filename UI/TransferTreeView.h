@@ -9,7 +9,7 @@ class TransferTreeView : public QTreeWidget
 {
   Q_OBJECT
 public:
-    TransferTreeView(QWidget*parent);
+    TransferTreeView(bool receiving_view, QWidget *parent);
 
     void resetDelegate();
 
@@ -17,6 +17,7 @@ private:
     bool eventFilter(QObject *obj, QEvent *event);
 
     DynamicTreeWidgetItemDelegate *m_delegate;
+    bool m_receiving_view;
 
 public slots:
     void clicked(const QModelIndex item);

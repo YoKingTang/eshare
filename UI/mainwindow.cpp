@@ -32,6 +32,8 @@
 #include <windows.h>
 #endif
 
+static const int PING_MS_INTERVAL = 10000;
+
 MainWindow::MainWindow(QWidget *parent) :
     QMainWindow(parent),
     ui(new Ui::MainWindow)
@@ -56,7 +58,7 @@ MainWindow::MainWindow(QWidget *parent) :
 
       QGroupBox *sentGB = new QGroupBox("Files inviati", this);
       {
-          m_sentView = new TransferTreeView(this);
+          m_sentView = new TransferTreeView(false, this);
 
           QStringList headers;
           headers << tr("Progresso") << tr("Destinatario") << tr("File");
@@ -80,7 +82,7 @@ MainWindow::MainWindow(QWidget *parent) :
 
       QGroupBox *receivedGB = new QGroupBox("Files ricevuti", this);
       {
-          m_receivedView = new TransferTreeView(this);
+          m_receivedView = new TransferTreeView(true, this);
 
           QStringList headers;
           headers << tr("Progresso") << tr("Mittente") << tr("Destinazione");
@@ -243,7 +245,7 @@ void MainWindow::clear_sent(bool) // SLOT
     QMutexLocker lock(&m_my_transfer_requests_mutex);
     for(int i = 0; i < m_my_transfer_requests.size(); ++i)
     {
-      int value = m_sentView->topLevelItem(i)->data(2, Qt::UserRole + 2).toInt();
+      int value = m_sentView->topLevelItem(i)->data(0, Qt::UserRole + 2).toInt();
       if (value != 100)
       {
         pending_uncompleted = true;
@@ -259,7 +261,7 @@ void MainWindow::clear_sent(bool) // SLOT
       return;
     }
   }
-  auto reply = QMessageBox::question(this, "Conferma di cancellazione", "Ci sono trasferimenti inviati non ancora"
+  auto reply = QMessageBox::question(this, "Conferma di cancellazione", "Ci sono trasferimenti inviati non ancora "
                                      "completati. Si vuole cancellare lo stesso tutti i trasferimenti inviati?\n"
                                      "(I destinatari non saranno in grado di completare un trasferimento annullato)",
                                      QMessageBox::Yes | QMessageBox::No);
@@ -279,7 +281,7 @@ void MainWindow::clear_received(bool) // SLOT
   {
     for(int i = 0; i < m_external_transfer_requests.size(); ++i)
     {
-      int value = m_receivedView->topLevelItem(i)->data(2, Qt::UserRole + 2).toInt();
+      int value = m_receivedView->topLevelItem(i)->data(0, Qt::UserRole + 2).toInt();
       if (value != 100)
       {
         pending_uncompleted = true;
@@ -316,7 +318,8 @@ void MainWindow::hide_main_window() // SLOT
 void MainWindow::show_main_window() // SLOT
 {
   ping_peers(); // Immediately ping peers, then with a delay
-  m_peers_ping_timer->start();
+  connect(m_peers_ping_timer.get(), SIGNAL(timeout()), this, SLOT(ping_peers()));
+  m_peers_ping_timer->start(PING_MS_INTERVAL);
   this->showNormal();
 }
 
@@ -467,6 +470,8 @@ void MainWindow::dropEvent(QDropEvent *event)
     QString ip, hostname; int service_port, transfer_port;
     std::tie(ip, service_port, transfer_port, hostname) = peer;
 
+    temporary_service_socket->setProperty("receiver", hostname);
+
     connect(temporary_service_socket, SIGNAL(connected()), this, SLOT(temporary_service_socket_connected()));
     connect(temporary_service_socket, SIGNAL(error(QAbstractSocket::SocketError)),
             this, SLOT(temporary_service_socket_error(QAbstractSocket::SocketError)));
@@ -588,6 +593,7 @@ void MainWindow::initialize_peers()
   read_peers_from_file();
 
   m_peer_online.resize(m_peers.size(), false);
+  m_peer_answered_last_ping.resize(m_peers.size(), false);
 
   // Process every peer found
   size_t index = 0;
@@ -638,7 +644,7 @@ void MainWindow::initialize_peers_ping()
   m_peers_ping_timer = std::make_unique<QTimer>(this);
   connect(m_peers_ping_timer.get(), SIGNAL(timeout()), this, SLOT(ping_peers()));
   ping_peers(); // Ping immediately first, then with a timeout
-  m_peers_ping_timer->start(10000);
+  m_peers_ping_timer->start(PING_MS_INTERVAL);
 }
 
 QString MainWindow::get_local_address()
@@ -690,7 +696,7 @@ void MainWindow::add_new_external_transfer_requests(QVector<TransferRequest> req
   m_tray_icon->showMessage("eKAshare", info_text, QSystemTrayIcon::Information, 2000);
 }
 
-void MainWindow::add_new_my_transfer_requests(QVector<TransferRequest> reqs)
+void MainWindow::add_new_my_transfer_requests(QString receiver, QVector<TransferRequest> reqs)
 {
   QMutexLocker lock(&m_my_transfer_requests_mutex);
   for (auto& req : reqs)
@@ -703,7 +709,7 @@ void MainWindow::add_new_my_transfer_requests(QVector<TransferRequest> reqs)
     item->setData(0, Qt::UserRole + 2, 0); // Progressbar 0%
 
     // item->setText(0, "0"); // Progress styled by delegate
-    item->setText(1, get_peer_name_from_address(req.m_sender_address)); // Sender
+    item->setText(1, receiver); // Receiver
     QString destinationFile = req.m_file_path;
     item->setText(2, destinationFile); // Destination (remote file written)
 
@@ -867,6 +873,7 @@ void MainWindow::server_socket_error(QAbstractSocket::SocketError err) // SLOT
 void MainWindow::temporary_service_socket_connected() // SLOT
 {
   QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
+  auto receiver = socket->property("receiver").toString();
 
   // Send pending transfer requests
 
@@ -885,7 +892,7 @@ void MainWindow::temporary_service_socket_connected() // SLOT
 
   socket->write(block);
 
-  add_new_my_transfer_requests(m_my_pending_requests_to_send);
+  add_new_my_transfer_requests(receiver, m_my_pending_requests_to_send);
 
   socket->flush();
   socket->disconnectFromHost();
@@ -923,11 +930,22 @@ void MainWindow::listview_transfer_accepted(QModelIndex index) // SLOT
 
 void MainWindow::ping_peers() // SLOT
 {
-  size_t index = 0;
+  qDebug() << "[ping_peers] Starting an all-peers ping";
+  int index = 0;
   for(auto& tuple : m_peers)
   {
     QString ip, hostname; int service_port, transfer_port;
     std::tie(ip, service_port, transfer_port, hostname) = tuple;
+
+    if (!m_peer_answered_last_ping[index])
+    {
+      m_peer_online[index] = false;
+
+      auto item = m_peersView->topLevelItem(index);
+      item->setIcon(0, QIcon(":Res/red_light.png"));
+    }
+    else
+      m_peer_answered_last_ping[index] = false;
 
     QTcpSocket *ping_socket = new QTcpSocket(this);
     ping_socket->setProperty("state", "awaiting_ping_connection");
@@ -948,9 +966,11 @@ void MainWindow::ping_peers() // SLOT
 
 void MainWindow::ping_failed(QAbstractSocket::SocketError err) // SLOT
 {
-  (void)err;
+  (void)err;  
   QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
   auto peer_id = socket->property("peer_id").toInt();
+
+  qDebug() << "Ping failed for peer " << peer_id << " with " << err;
 
   m_peer_online[peer_id] = false;
 
@@ -992,6 +1012,7 @@ void MainWindow::ping_socket_ready_read() // SLOT
   if (command == "PONG!")
   {
     m_peer_online[peer_id] = true;
+    m_peer_answered_last_ping[peer_id] = true;
 
     auto item = m_peersView->topLevelItem(peer_id);
     item->setIcon(0, QIcon(":Res/green_light.png"));
@@ -999,6 +1020,7 @@ void MainWindow::ping_socket_ready_read() // SLOT
   else
   {
     m_peer_online[peer_id] = false;
+    m_peer_answered_last_ping[peer_id] = false;
 
     auto item = m_peersView->topLevelItem(peer_id);
     item->setIcon(0, QIcon(":Res/red_light.png"));
