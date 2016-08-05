@@ -6,6 +6,7 @@ MSVC generation
 2. Build zlib (both debug and release)
 
 3. Generate the project files for quazip into quazip/build with CMake by setting the following
+
         Qt5Core_DIR = D:\Qt\Qt5.7.0\5.7\msvc2015_64\lib\cmake\Qt5Core (or wherever you installed the MSVC copy of Qt)
         
 5. Build quazip (both debug and release)
