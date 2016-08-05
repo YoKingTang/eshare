@@ -35,6 +35,7 @@ StarterSocketWrapper::StarterSocketWrapper(TransferStarter& parent) :
   }
 
   connect(this, SIGNAL(update_percentage(int)), &m_parent, SLOT(update_percentage_slot(int)));
+  connect(this, SIGNAL(file_received()), &m_parent, SLOT(file_received_slot()));
 
   m_socket.connectToHost(parent.m_request.m_sender_address, parent.m_request.m_sender_transfer_port);
 }
@@ -137,6 +138,7 @@ void StarterSocketWrapper::transfer_ready_read() // SLOT
       }
 
       emit update_percentage(100);
+      emit file_received();
 
       m_parent.exit(0);
       return;
@@ -165,4 +167,9 @@ void TransferStarter::run() // Main thread entry point
 void TransferStarter::update_percentage_slot(int value) // SLOT
 {
   emit update_percentage(value);
+}
+
+void TransferStarter::file_received_slot() // SLOT
+{
+  emit file_received(m_request);
 }

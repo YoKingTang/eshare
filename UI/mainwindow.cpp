@@ -136,7 +136,7 @@ MainWindow::MainWindow(QWidget *parent) :
 
         {
           QWidget *horizontalWidget = new QWidget(this);
-          QHBoxLayout *hlayout = new QHBoxLayout(this);
+          QHBoxLayout *hlayout = new QHBoxLayout(horizontalWidget);
           horizontalWidget->setLayout(hlayout);
 
           QPixmap eka(":/Res/ekashare_icon.png");
@@ -265,7 +265,8 @@ void MainWindow::clear_sent(bool) // SLOT
   }
   auto reply = QMessageBox::question(this, "Conferma di cancellazione", "Ci sono trasferimenti inviati non ancora "
                                      "completati. Si vuole cancellare lo stesso tutti i trasferimenti inviati?\n"
-                                     "(I destinatari non saranno in grado di completare un trasferimento annullato)",
+                                     "(I destinatari non saranno in grado di completare un trasferimento annullato e/o "
+                                     "i dati potrebbero risultare corrotti in fase di decompressione)",
                                      QMessageBox::Yes | QMessageBox::No);
   if (reply == QMessageBox::Yes)
   {
@@ -301,7 +302,8 @@ void MainWindow::clear_received(bool) // SLOT
   }
   auto reply = QMessageBox::question(this, "Conferma di cancellazione", "Ci sono trasferimenti ricevuti non ancora"
                                      "completati. Si vuole cancellare lo stesso tutti i trasferimenti ricevuti?\n"
-                                     "(I mittenti non saranno in grado di completare un trasferimento annullato)",
+                                     "(I mittenti non saranno in grado di completare un trasferimento annullato e/o "
+                                     "i dati potrebbero risultare corrotti in fase di decompressione)",
                                      QMessageBox::Yes | QMessageBox::No);
   if (reply == QMessageBox::Yes)
   {
@@ -315,6 +317,8 @@ void MainWindow::hide_main_window() // SLOT
 {
   m_peers_ping_timer->stop();
   this->hide();
+  if (m_wait_packing_window)
+    m_wait_packing_window->hide();
 }
 
 void MainWindow::show_main_window() // SLOT
@@ -323,6 +327,8 @@ void MainWindow::show_main_window() // SLOT
   connect(m_peers_ping_timer.get(), SIGNAL(timeout()), this, SLOT(ping_peers()));
   m_peers_ping_timer->start(PING_MS_INTERVAL);
   this->showNormal();
+  if (m_wait_packing_window)
+    m_wait_packing_window->showNormal();
 }
 
 void MainWindow::initialize_tray_icon()
@@ -487,8 +493,10 @@ void MainWindow::dropEvent(QDropEvent *event)
         } // temp is destroyed
 
         // Block while packing
-        WaitPacking dialog(file, packed_filename, this);
-        dialog.exec();
+        m_wait_packing_window = std::make_unique<WaitPacking>(file, packed_filename, this);
+        m_wait_packing_window->exec();
+        m_wait_packing_window->close();
+        m_wait_packing_window.release();
 
         {
           QMutexLocker lock(&m_folder_to_packed_mutex);
@@ -719,6 +727,9 @@ void MainWindow::add_new_external_transfer_requests(QVector<TransferRequest> req
     // item->setText(0, "0"); // Progress styled by delegate
     item->setText(1, get_peer_name_from_address(request.m_sender_address)); // Sender
     item->setText(2, form_local_destination_file(request)); // Destination (local file written)
+    QFileInfo finfo(QFile(request.m_file_path).fileName());
+    QString fname(finfo.fileName());
+    item->setToolTip(2, fname);
 
     item->setFlags(item->flags() & ~Qt::ItemIsEditable);
     item->setTextAlignment(1, Qt::AlignHCenter);
@@ -780,6 +791,9 @@ void MainWindow::add_new_my_transfer_requests(QString receiver, QVector<Transfer
     item->setText(1, receiver); // Receiver
     QString destinationFile = req.m_file_path;
     item->setText(2, destinationFile); // Destination (remote file written)
+    QFileInfo finfo(QFile(destinationFile).fileName());
+    QString fname(finfo.fileName());
+    item->setToolTip(2, fname);
 
     item->setFlags(item->flags() & ~Qt::ItemIsEditable);
     item->setTextAlignment(1, Qt::AlignHCenter);
@@ -814,6 +828,8 @@ QString MainWindow::form_local_destination_file(TransferRequest& req) const
 
 QString MainWindow::get_peer_name_from_address(QString address) const
 {
+  if (address.compare("127.0.0.1") == 0)
+    return QString("[LocalHost]");
   for(auto& peer : m_peers)
   {
     QString ip, hostname; int service_port, transfer_port;
@@ -995,11 +1011,28 @@ void MainWindow::listview_transfer_accepted(QModelIndex index) // SLOT
     local_destination_file += ".zip";
   TransferStarter *ts = new TransferStarter(req, local_destination_file);
   connect(ts, SIGNAL(finished()), ts, SLOT(deleteLater()));
+  connect(ts, SIGNAL(file_received(TransferRequest)), this, SLOT(file_received(TransferRequest)));
 
   DynamicTreeWidgetItem *item = (DynamicTreeWidgetItem*)m_receivedView->topLevelItem(index.row());
   connect(ts, SIGNAL(update_percentage(int)), item, SLOT(update_percentage(int)));
 
   ts->start();
+}
+
+void MainWindow::file_received(TransferRequest req) // SLOT
+{
+  QString info_text;
+  QTextStream stream(&info_text);
+  QFileInfo finfo(QFile(req.m_file_path).fileName());
+  QString fname(finfo.fileName());
+  stream << "Trasferimento completato:\n" << fname << "\n(";
+  if (req.m_size == -1)
+    stream << "Packed " << Chunker::format_size_human(req.m_packed_size) << ")";
+  else
+    stream << Chunker::format_size_human(req.m_size) << ")";
+
+  stream.flush();
+  m_tray_icon->showMessage("eKAshare", info_text, QSystemTrayIcon::Information, 2000);
 }
 
 void MainWindow::ping_peers() // SLOT

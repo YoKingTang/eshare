@@ -40,6 +40,7 @@ private slots:
 
 signals:
   void update_percentage(int);
+  void file_received();
 };
 
 class TransferStarter : public QThread {
@@ -59,9 +60,11 @@ private:
 
 private slots:
   void update_percentage_slot(int value);
+  void file_received_slot();
 
 signals:
   void update_percentage(int);
+  void file_received(TransferRequest);
 };
 
 #endif // TRANSFERSTARTER_H

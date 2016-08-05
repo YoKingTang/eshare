@@ -20,6 +20,7 @@ namespace Ui {
 }
 class PeersView;
 class TransfersView;
+class WaitPacking;
 
 QT_BEGIN_NAMESPACE
 class QNetworkSession;
@@ -117,6 +118,7 @@ private slots:
     void temporary_service_socket_error(QAbstractSocket::SocketError err);
     void service_socket_error(QAbstractSocket::SocketError err);
     void listview_transfer_accepted(QModelIndex index);
+    void file_received(TransferRequest req);
 
     void ping_peers();
     void ping_failed(QAbstractSocket::SocketError err);
@@ -141,6 +143,8 @@ private:
 
     void closeEvent(QCloseEvent *event) Q_DECL_OVERRIDE;
     bool nativeEvent(const QByteArray&, void* msg, long* result);
+
+    std::unique_ptr<WaitPacking> m_wait_packing_window;
 
 private slots:
     void tray_icon_activated(QSystemTrayIcon::ActivationReason reason);
