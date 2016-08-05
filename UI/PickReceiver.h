@@ -3,11 +3,12 @@
 
 #include <QDialog>
 #include <QCompleter>
-#include "mainwindow.h"
 
 namespace Ui {
 class PickReceiver;
 }
+
+class MainWindow;
 
 class PickReceiver : public QDialog
 {

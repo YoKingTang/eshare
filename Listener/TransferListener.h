@@ -24,6 +24,7 @@ private:
   TransferListener& m_parent;
 
   QTcpServer m_server;
+  TransferRequest m_request;
 
 private slots:
   void new_transfer_connection();
@@ -37,7 +38,10 @@ class TransferListener : public QThread {
   friend class ListenerSocketWrapper;
 public:
 
-  TransferListener(MainWindow *main_win, std::function<bool(TransferRequest&, DynamicTreeWidgetItem*&)> trans_retriever);
+  TransferListener(MainWindow *main_win,
+                   std::function<bool(TransferRequest&, DynamicTreeWidgetItem*&)> trans_retriever,
+                   std::function<QString(QString)> packed_retriever,
+                   std::function<void(QString)> packed_cleanup);
 
   void set_transfer_port(int local_transfer_port);
 
@@ -46,6 +50,8 @@ private:
 
   MainWindow *m_main_win = nullptr;
   std::function<bool(TransferRequest&, DynamicTreeWidgetItem*&)> m_trans_retriever; // Needs to be thread-safe
+  std::function<QString(QString folder)> m_packed_retriever; // Needs to be thread-safe
+  std::function<void(QString)> m_packed_cleanup; // Needs to be thread-safe
 
   int m_local_transfer_port = 67;
 };

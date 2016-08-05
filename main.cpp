@@ -36,8 +36,13 @@ int main(int argc, char *argv[])
 {    
     QApplication a(argc, argv);
     QGuiApplication::setApplicationDisplayName("eKAshare");
+    QCoreApplication::setApplicationName("eshare");
+    QCoreApplication::setApplicationVersion("1.0");
 
     QCommandLineParser parser;
+    parser.setApplicationDescription("File transfer utility - copyright EKA srl");
+    parser.addHelpOption();
+    parser.addVersionOption();
     parser.addOptions({
         {"debug",
             QCoreApplication::translate("main", "Stampa tutti i messaggi di debug su un file di log (ekashare_debug.log)")},

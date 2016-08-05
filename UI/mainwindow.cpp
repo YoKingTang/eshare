@@ -1,6 +1,7 @@
 #include <UI/MainWindow.h>
-#include <ui_mainwindow.h>
+#include <ui_MainWindow.h>
 #include <UI/PickReceiver.h>
+#include <UI/WaitPacking.h>
 #include <UI/DynamicTreeWidgetItem.h>
 #include <UI/DynamicTreeWidgetItemDelegate.h>
 #include <Receiver/TransferStarter.h>
@@ -26,6 +27,7 @@
 #include <QDataStream>
 #include <QNetworkInterface>
 #include <QFileInfo>
+#include <QTemporaryFile>
 #include <functional>
 
 #ifdef _WIN32
@@ -413,7 +415,8 @@ void MainWindow::dropEvent(QDropEvent *event)
   const QMimeData* mime_data = event->mimeData();
 
   // Check the mime type, allowed types: a file or a list of files
-  if (mime_data->hasUrls()) {
+  if (mime_data->hasUrls())
+  {
     QStringList path_list;
     QList<QUrl> url_list = mime_data->urls();
 
@@ -458,9 +461,48 @@ void MainWindow::dropEvent(QDropEvent *event)
     {
       TransferRequest req = TransferRequest::generate_unique();
       req.m_file_path = file;
-      req.m_size = QFile(file).size();
+      // Delay size calculation to later (is it a directory?)
       req.m_sender_address = get_local_address();
       req.m_sender_transfer_port = m_transfer_port;
+
+      // If this file is a directory, compress it and set the unpack flag after the transfer
+      if (QFileInfo(file).isDir())
+      {
+        req.m_size = -1; // Signal that this is a packed transfer
+
+        // Generate a unique temporary filename for packing
+        QString packed_filename;
+        {
+          QTemporaryFile temp;
+          if (temp.open())
+            packed_filename = temp.fileName();
+          else
+          {
+            // WARNING - disk full or not authorized
+            QMessageBox::warning(this, tr("Impossibile scrivere files temporanei"),
+                                 tr("Scrittura nell'area dei files temporanei fallita (disco pieno oppure autorizzazioni insufficienti)"));
+            return;
+          }
+          temp.close();
+        } // temp is destroyed
+
+        // Block while packing
+        WaitPacking dialog(file, packed_filename, this);
+        dialog.exec();
+
+        {
+          QMutexLocker lock(&m_folder_to_packed_mutex);
+          m_folder_to_packed.insert(file, packed_filename);
+        }
+
+        QFileInfo f(packed_filename);
+        req.m_packed_size = f.size();
+      }
+      else
+      {
+        req.m_size = QFile(file).size();
+        req.m_packed_size = req.m_size;
+      }
 
       m_my_pending_requests_to_send.append(req);
     }
@@ -628,8 +670,12 @@ void MainWindow::initialize_servers()
 
   qDebug() << "[initialize_server] Service server now listening on port " << m_service_port;
 
-  m_transfer_listener = std::make_unique<TransferListener>(this, std::bind(&MainWindow::my_transfer_retriever, this,
-                                                                           std::placeholders::_1, std::placeholders::_2));
+  m_transfer_listener = std::make_unique<TransferListener>(this,
+                                                           // Thread-safe callbacks from transfer listeners
+                                                           std::bind(&MainWindow::my_transfer_retriever, this,
+                                                                     std::placeholders::_1, std::placeholders::_2),
+                                                           std::bind(&MainWindow::packed_retriever, this, std::placeholders::_1),
+                                                           std::bind(&MainWindow::packed_cleanup, this, std::placeholders::_1));
 
   m_transfer_listener->set_transfer_port(m_transfer_port);
   m_transfer_listener->moveToThread(m_transfer_listener.get());
@@ -677,7 +723,7 @@ void MainWindow::add_new_external_transfer_requests(QVector<TransferRequest> req
     item->setFlags(item->flags() & ~Qt::ItemIsEditable);
     item->setTextAlignment(1, Qt::AlignHCenter);
 
-    total_size += request.m_size;
+    total_size += (request.m_size == -1) ? request.m_packed_size : request.m_size;
   }
 
   QString info_text;
@@ -694,6 +740,28 @@ void MainWindow::add_new_external_transfer_requests(QVector<TransferRequest> req
 
   stream.flush();
   m_tray_icon->showMessage("eKAshare", info_text, QSystemTrayIcon::Information, 2000);
+}
+
+QString MainWindow::packed_retriever(QString file)
+{
+  QMutexLocker lock(&m_folder_to_packed_mutex);
+  auto it = m_folder_to_packed.find(file);
+  if (it == m_folder_to_packed.end())
+    return QString();
+  else
+    return it.value();
+}
+
+void MainWindow::packed_cleanup(QString file)
+{
+  QMutexLocker lock(&m_folder_to_packed_mutex);
+  auto it = m_folder_to_packed.find(file);
+  if (it == m_folder_to_packed.end())
+    return;
+  QFile temp(it.value());
+  auto res = temp.remove();
+  if (!res)
+    qDebug() << "[packed_cleanup] error: " << temp.errorString();
 }
 
 void MainWindow::add_new_my_transfer_requests(QString receiver, QVector<TransferRequest> reqs)
@@ -740,7 +808,8 @@ QString MainWindow::form_local_destination_file(TransferRequest& req) const
   // Create a local file destination from an external request
   QFileInfo finfo(QFile(req.m_file_path).fileName());
   QString fname(finfo.fileName());
-  return m_default_download_path + QDir::separator() + fname;
+  QString res = QDir::toNativeSeparators(m_default_download_path) + QDir::separator() + fname;
+  return res;
 }
 
 QString MainWindow::get_peer_name_from_address(QString address) const
@@ -782,9 +851,10 @@ void MainWindow::server_ready_read() // SLOT
     read_stream.startTransaction();
     for(int i = 0; i < files_n; ++i)
     {
+      // <TRANSFERREQUEST>
       TransferRequest req;
       read_stream >> req.m_unique_id >> req.m_file_path >> req.m_size >>
-                     req.m_sender_address >> req.m_sender_transfer_port;
+                     req.m_sender_address >> req.m_sender_transfer_port >> req.m_packed_size;
       fill.append(req);
     }
     if (!read_stream.commitTransaction())
@@ -885,8 +955,9 @@ void MainWindow::temporary_service_socket_connected() // SLOT
 
   for(auto& req : m_my_pending_requests_to_send)
   {
+    // <TRANSFERREQUEST>
     out << req.m_unique_id << req.m_file_path << req.m_size
-        << req.m_sender_address << req.m_sender_transfer_port;
+        << req.m_sender_address << req.m_sender_transfer_port << req.m_packed_size;
 
   }
 
@@ -919,7 +990,10 @@ void MainWindow::listview_transfer_accepted(QModelIndex index) // SLOT
 
   auto req = m_external_transfer_requests[index.row()];
 
-  TransferStarter *ts = new TransferStarter(req, form_local_destination_file(req));
+  QString local_destination_file = form_local_destination_file(req);
+  if (req.m_size == -1)
+    local_destination_file += ".zip";
+  TransferStarter *ts = new TransferStarter(req, local_destination_file);
   connect(ts, SIGNAL(finished()), ts, SLOT(deleteLater()));
 
   DynamicTreeWidgetItem *item = (DynamicTreeWidgetItem*)m_receivedView->topLevelItem(index.row());

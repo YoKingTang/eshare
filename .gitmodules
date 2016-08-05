@@ -1,0 +1,6 @@
+[submodule "ThirdParty/zlib"]
+	path = ThirdParty/zlib
+	url = https://github.com/madler/zlib
+[submodule "ThirdParty/quazip"]
+	path = ThirdParty/quazip
+	url = https://github.com/binaryking/quazip

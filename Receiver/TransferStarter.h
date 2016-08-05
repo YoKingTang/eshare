@@ -30,6 +30,8 @@ private:
 
   void send_chunk_ACK();
 
+  bool m_unpack_after_transfer = false;
+
 private slots:
   void new_transfer_connection();
   void socket_error(QAbstractSocket::SocketError err);

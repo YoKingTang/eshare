@@ -59,20 +59,21 @@ void ListenerSocketWrapper::socket_ready_read() // SLOT
       return; // Wait for more data
     }
 
-    TransferRequest req;
-    req.m_unique_id = req_id;
+    m_request.m_unique_id = req_id;
 
     DynamicTreeWidgetItem *associated_item = nullptr;
-    if (!m_parent.m_trans_retriever(req, associated_item))
+    if (!m_parent.m_trans_retriever(m_request, associated_item))
     {
-      qDebug() << "[socket_ready_read] Error: we were given permission for a transfer we didn't ask";
+      qDebug() << "[socket_ready_read] Error: we were given permission for a transfer we didn't ask for";
       socket->abort();
     }
+    // req now contains the transfer requests we did send
 
     Chunker *chunker = new Chunker(Chunker_Mode::SENDER);
-    if (!chunker->open(req.m_file_path))
+    QString file_to_send = (m_request.m_size == -1) ? m_parent.m_packed_retriever(m_request.m_file_path) : m_request.m_file_path;
+    if (!chunker->open(file_to_send))
     {
-      qDebug() << "[socket_ready_read] Error: could not open file '" << req.m_file_path << "'";
+      qDebug() << "[socket_ready_read] Error: could not open file '" << file_to_send << "' (aka " << m_request.m_file_path << ")";
       socket->abort();
     }
 
@@ -111,6 +112,11 @@ void ListenerSocketWrapper::socket_ready_read() // SLOT
         QMetaObject::invokeMethod(listview_item, "update_percentage", Q_ARG(int, 100));
         socket->flush();
         socket->disconnectFromHost();
+        chunker->close();
+
+        if (m_request.m_size == -1)
+          m_parent.m_packed_cleanup(m_request.m_file_path); // Cleanup zip
+
         return;
       }
 
@@ -139,9 +145,13 @@ void ListenerSocketWrapper::socket_error(QAbstractSocket::SocketError err) // SL
   socket->abort();
 }
 
-TransferListener::TransferListener(MainWindow *main_win, std::function<bool(TransferRequest&, DynamicTreeWidgetItem*&)> trans_retriever) :
+TransferListener::TransferListener(MainWindow *main_win,
+                                   std::function<bool(TransferRequest&, DynamicTreeWidgetItem*&)> trans_retriever,
+                                   std::function<QString(QString)> packed_retriever, std::function<void(QString)> packed_cleanup) :
   m_main_win(main_win),
-  m_trans_retriever(trans_retriever)
+  m_trans_retriever(trans_retriever),
+  m_packed_retriever(packed_retriever),
+  m_packed_cleanup(packed_cleanup)
 {}
 
 void TransferListener::set_transfer_port(int local_transfer_port)

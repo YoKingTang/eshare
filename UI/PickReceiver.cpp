@@ -1,4 +1,5 @@
-#include "pickreceiver.h"
+#include <UI/PickReceiver.h>
+#include <UI/MainWindow.h>
 #include "ui_pickreceiver.h"
 #include <QSortFilterProxyModel>
 #include <QTreeView>

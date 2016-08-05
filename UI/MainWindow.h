@@ -86,6 +86,13 @@ private:
     QVector<TransferRequest> m_external_transfer_requests;
     void add_new_external_transfer_requests(QVector<TransferRequest> reqs);
 
+    // A map which stores the association between a local folder and a zip file of the same folder
+    // into the temporary directory (used by the sender)
+    QMutex m_folder_to_packed_mutex;
+    QMap<QString, QString> m_folder_to_packed;
+    QString packed_retriever(QString file);
+    void packed_cleanup(QString file);
+
     // All sent pending transfer requests
     QMutex m_my_transfer_requests_mutex;
     QVector<TransferRequest> m_my_transfer_requests;
