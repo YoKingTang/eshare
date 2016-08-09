@@ -15,7 +15,7 @@ class TransferStarter;
 class StarterSocketWrapper : public QObject {
   Q_OBJECT
 public:
-  StarterSocketWrapper(TransferStarter& parent);
+  explicit StarterSocketWrapper(TransferStarter& parent);
 
 private:
   friend class TransferStarter;
@@ -49,8 +49,7 @@ class TransferStarter : public QThread {
   friend class StarterSocketWrapper;
 public:
 
-  TransferStarter(TransferRequest req, QString local_file);
-
+  explicit TransferStarter(TransferRequest req, QString local_file);
 
 private:
   void run() Q_DECL_OVERRIDE;

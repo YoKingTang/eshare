@@ -17,7 +17,7 @@ class Chunker;
 class ListenerSocketWrapper : public QObject {
   Q_OBJECT
 public:
-  ListenerSocketWrapper(TransferListener& parent);
+  explicit ListenerSocketWrapper(TransferListener& parent);
   ~ListenerSocketWrapper();
 
 private:
@@ -47,7 +47,7 @@ class TransferListener : public QThread {
   friend class ListenerSocketWrapper;
 public:
 
-  TransferListener(MainWindow *main_win,
+  explicit TransferListener(MainWindow *main_win,
                    std::function<bool(TransferRequest&)> trans_retriever,
                    std::function<QString(QString)> packed_retriever,
                    std::function<void(QString)> packed_cleanup);

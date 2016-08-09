@@ -16,7 +16,7 @@ class DynamicTreeWidgetItemDelegate : public QStyledItemDelegate
   // Qt::UserRole + 2 -> (int)Progressbar value
   Q_OBJECT
 public:
-    DynamicTreeWidgetItemDelegate(QObject *parent = Q_NULLPTR) :
+    explicit DynamicTreeWidgetItemDelegate(QObject *parent = Q_NULLPTR) :
       QStyledItemDelegate(parent) {}
 
     bool editorEvent(QEvent *event, QAbstractItemModel *model,
@@ -28,7 +28,7 @@ public:
     void notifyMouseLeave();
 private:
     QModelIndex m_lastUnderMouse;
-    QAbstractItemModel *m_model;
+    QAbstractItemModel *m_model = nullptr;
 
 signals:
     void needsUpdate(const QModelIndex&);

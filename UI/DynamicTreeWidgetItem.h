@@ -8,7 +8,7 @@
 class DynamicTreeWidgetItem : public QObject, public QTreeWidgetItem {
   Q_OBJECT
 public:
-  DynamicTreeWidgetItem (QTreeWidget *view);
+  explicit DynamicTreeWidgetItem (QTreeWidget *view);
 
 private:
   QTreeWidget *m_view = nullptr;

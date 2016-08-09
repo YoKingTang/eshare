@@ -529,7 +529,7 @@ void MainWindow::read_peers_from_file()
   unsigned char utf8BOM[3] = {0xef, 0xbb, 0xbf};
   unsigned char foundBOM[3];
   file >> foundBOM;
-  if (memcmp(utf8BOM, utf8BOM, sizeof(utf8BOM)) != 0)
+  if (memcmp(foundBOM, utf8BOM, sizeof(utf8BOM)) != 0)
     file.seekg(ios::beg); // Not a UTF8, treat it as ASCII
 
   QStringList list;
