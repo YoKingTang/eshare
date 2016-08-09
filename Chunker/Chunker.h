@@ -19,6 +19,7 @@ public:
   void close();
   bool reached_eof() const;
 
+  QString get_current_file_path() const;
   qint64 get_pos() const;
   qint64 get_file_size() const;
   qint64 get_expected_file_size() const;

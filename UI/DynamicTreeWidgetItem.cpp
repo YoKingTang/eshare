@@ -6,7 +6,6 @@ DynamicTreeWidgetItem::DynamicTreeWidgetItem(QTreeWidget *view) :
 
 void DynamicTreeWidgetItem::update_percentage(int value) // SLOT
 {
-
   this->setData(0, Qt::UserRole + 2/* Progressbar value */, QVariant::fromValue(value));
   this->emitDataChanged();
 }

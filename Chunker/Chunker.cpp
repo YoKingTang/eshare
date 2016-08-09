@@ -55,7 +55,7 @@ bool Chunker::reached_expected_eof() const
   if (m_mode != RECEIVER)
     qDebug() << "[reached_expected_eof] Warning: calling receiver function from sender mode";
 
-  return m_file.pos() >= m_expected_size;
+  return m_file.pos() == m_expected_size;
 }
 
 qint64 Chunker::get_next_chunk_size() const
@@ -91,6 +91,11 @@ qint64 Chunker::chunk_size() const
 bool Chunker::reached_eof() const
 {
   return m_file.atEnd();
+}
+
+QString Chunker::get_current_file_path() const
+{
+  return m_file.fileName();
 }
 
 qint64 Chunker::get_pos() const

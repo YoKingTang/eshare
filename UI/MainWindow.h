@@ -21,6 +21,7 @@ namespace Ui {
 class PeersView;
 class TransfersView;
 class WaitPacking;
+class TransferStarter;
 
 QT_BEGIN_NAMESPACE
 class QNetworkSession;
@@ -45,6 +46,7 @@ private:
     QNetworkSession *m_network_session = nullptr;
 
     TransferTreeView *m_sentView;
+    QMenu *m_sentViewMenu;
     TransferTreeView *m_receivedView;
     QTreeWidget *m_peersView;
     QStringList m_peers_completion_list; // A list of words from peers data for autocompletion
@@ -99,13 +101,15 @@ private:
     QVector<TransferRequest> m_my_transfer_requests;
     void add_new_my_transfer_requests(QString receiver, QVector<TransferRequest> reqs);
     QVector<TransferRequest> m_my_pending_requests_to_send; // Temporary storage for requests not yet sent
-                                                            // during drag/drop event processing
+                                                            // during drag/drop event processing    
 
     // Transfer server for incoming pending requests
     std::unique_ptr<TransferListener> m_transfer_listener;
     // Retrieves a 'my transfer' request from the id. Also retrieves the associated listview item pointer
-    bool my_transfer_retriever(TransferRequest& req, DynamicTreeWidgetItem *&item_ptr);
+    bool my_transfer_retriever(TransferRequest& req);
+    QVector<TransferStarter*> m_running_transfer_starters;
 
+    void pickreceiver_and_send(QStringList files);
     QString form_local_destination_file(TransferRequest& req) const;
     QString get_peer_name_from_address(QString address) const;
 
@@ -119,6 +123,9 @@ private slots:
     void service_socket_error(QAbstractSocket::SocketError err);
     void listview_transfer_accepted(QModelIndex index);
     void file_received(TransferRequest req);
+    void sent_view_custom_context_menu(QPoint point);
+    void sent_view_send_file(bool);
+    void sent_view_send_folder(bool);
 
     void ping_peers();
     void ping_failed(QAbstractSocket::SocketError err);
@@ -148,7 +155,10 @@ private:
 
 private slots:
     void tray_icon_activated(QSystemTrayIcon::ActivationReason reason);
-
+public slots:
+    // Sending transfers are harder to deal with since we're accepting them asynchronously
+    // and associating them with a new socket instance
+    void update_progress_sender(quint64 transfer_unique_id, int progress);
 };
 
 #endif // MAINWINDOW_H

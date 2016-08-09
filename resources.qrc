@@ -6,5 +6,7 @@
         <file>Res/red_light.png</file>
         <file>Res/ekashare_icon.png</file>
         <file>Res/box.png</file>
+        <file>Res/file.png</file>
+        <file>Res/folder.png</file>
     </qresource>
 </RCC>

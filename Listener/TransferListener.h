@@ -1,7 +1,6 @@
 #ifndef REQUESTLISTENER_H
 #define REQUESTLISTENER_H
 
-#include <UI/DynamicTreeWidgetItem.h>
 #include <Data/TransferRequest.h>
 #include <QThread>
 #include <QTcpServer>
@@ -10,6 +9,7 @@
 
 class TransferListener;
 class MainWindow;
+class Chunker;
 
 // The main transfer listener - identifies incoming acknowledges
 // according to the list of local pending transfers and start the
@@ -18,18 +18,27 @@ class ListenerSocketWrapper : public QObject {
   Q_OBJECT
 public:
   ListenerSocketWrapper(TransferListener& parent);
+  ~ListenerSocketWrapper();
 
 private:
   friend class TransferListener;
   TransferListener& m_parent;
 
   QTcpServer m_server;
-  TransferRequest m_request;
+  QVector<Chunker*> m_allocated_chunkers;
+  QVector<QTcpSocket*> m_running_senders;
 
 private slots:
   void new_transfer_connection();
   void socket_ready_read();
   void socket_error(QAbstractSocket::SocketError err);
+  // Invoked when a cleanup (e.g. clear all sending transfers) is requested
+  void abort_all_running_senders_slot();
+  void cleanup_disconnected_socket();
+
+signals:
+  void all_senders_aborted();
+  void update_progress(quint64 transfer_unique_id, int progress);
 };
 
 class TransferListener : public QThread {
@@ -39,7 +48,7 @@ class TransferListener : public QThread {
 public:
 
   TransferListener(MainWindow *main_win,
-                   std::function<bool(TransferRequest&, DynamicTreeWidgetItem*&)> trans_retriever,
+                   std::function<bool(TransferRequest&)> trans_retriever,
                    std::function<QString(QString)> packed_retriever,
                    std::function<void(QString)> packed_cleanup);
 
@@ -49,11 +58,20 @@ private:
   void run() Q_DECL_OVERRIDE;
 
   MainWindow *m_main_win = nullptr;
-  std::function<bool(TransferRequest&, DynamicTreeWidgetItem*&)> m_trans_retriever; // Needs to be thread-safe
+  std::function<bool(TransferRequest&)> m_trans_retriever; // Needs to be thread-safe
   std::function<QString(QString folder)> m_packed_retriever; // Needs to be thread-safe
   std::function<void(QString)> m_packed_cleanup; // Needs to be thread-safe
 
   int m_local_transfer_port = 67;
+
+signals:
+  void abort_all_running_senders(); // Send to children
+  void all_senders_aborted(); // Feedback - Send to parents
+  void update_progress(quint64 transfer_unique_id, int progress);
+
+public slots:
+  void update_progress_slot(quint64 transfer_unique_id, int progress);
+  void all_senders_aborted_slot();
 };
 
 #endif // REQUESTLISTENER_H

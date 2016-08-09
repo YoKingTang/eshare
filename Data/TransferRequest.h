@@ -1,6 +1,7 @@
 #ifndef TRANSFERREQUEST_H
 #define TRANSFERREQUEST_H
 
+#include <QObject>
 #include <QString>
 
 // Represents a transfer request towards this endpoint which might be
@@ -26,5 +27,7 @@ struct TransferRequest
     return t;
   }
 };
+
+Q_DECLARE_METATYPE(TransferRequest) // Variant storage enabled
 
 #endif // TRANSFERREQUEST_H

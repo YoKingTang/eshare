@@ -56,6 +56,7 @@ private:
   void run() Q_DECL_OVERRIDE;
 
   TransferRequest m_request;
+  // The local file we have to write. It ends in .zip if this has to be unpacked
   QString         m_local_file;
 
 private slots:

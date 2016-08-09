@@ -80,7 +80,17 @@ void StarterSocketWrapper::new_transfer_connection() // SLOT
 void StarterSocketWrapper::socket_error(QAbstractSocket::SocketError err) // SLOT
 {
   qDebug() << "[socket_error] Error: " << err;
-  m_socket.abort();
+  m_socket.disconnectFromHost();
+  // This transfer failed - cleanup any downloaded data if we didn't reach 100%
+  if (!m_chunker->reached_expected_eof())
+  {
+    qDebug() << "[socket_error] Transfer incomplete!";
+    m_chunker->close();
+    QFile zip(m_parent.m_local_file); // Cleanup zip
+    auto res = zip.remove();
+    if (!res)
+      qDebug() << "[socket_error cleanup] error while removing zip: " << zip.errorString();
+  }
 }
 
 void StarterSocketWrapper::transfer_bytes_written(qint64) // SLOT

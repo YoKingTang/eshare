@@ -28,6 +28,7 @@
 #include <QNetworkInterface>
 #include <QFileInfo>
 #include <QTemporaryFile>
+#include <QFileDialog>
 #include <functional>
 
 #ifdef _WIN32
@@ -80,6 +81,17 @@ MainWindow::MainWindow(QWidget *parent) :
           vbox->addWidget(clear_button);
 
           sentGB->setLayout(vbox);
+
+          // Add a context menu for the sent view
+          m_sentView->setContextMenuPolicy(Qt::CustomContextMenu);
+          m_sentViewMenu = new QMenu(m_sentView);
+          QIcon fileIcon = QIcon(QPixmap(":/Res/file.png"));
+          auto file_action = m_sentViewMenu->addAction(fileIcon, "Invia file");
+          QIcon folderIcon = QIcon(QPixmap(":/Res/folder.png"));
+          auto folder_action = m_sentViewMenu->addAction(folderIcon, "Invia cartella");
+          connect(m_sentView, SIGNAL(customContextMenuRequested(QPoint)), this, SLOT(sent_view_custom_context_menu(QPoint)));
+          connect(file_action, SIGNAL(triggered(bool)), this, SLOT(sent_view_send_file(bool)));
+          connect(folder_action, SIGNAL(triggered(bool)), this, SLOT(sent_view_send_folder(bool)));
       }
 
       QGroupBox *receivedGB = new QGroupBox("Files ricevuti", this);
@@ -271,9 +283,23 @@ void MainWindow::clear_sent(bool) // SLOT
   if (reply == QMessageBox::Yes)
   {
     QMutexLocker lock(&m_my_transfer_requests_mutex);
-    m_sentView->clear();
-    m_sentView->resetDelegate();
-    m_my_transfer_requests.clear();
+    QMutexLocker lockftp(&m_folder_to_packed_mutex); // A thread never uses both mutexes together, this should be fine
+    // Clear up the view when all sockets can't send updateProgress messages anymore
+    connect(m_transfer_listener.get(), &TransferListener::all_senders_aborted, this, [&]() {
+      m_sentView->clear();
+      m_sentView->resetDelegate();
+      m_my_transfer_requests.clear();
+      // Also clean up any zipped and unsent/uncompleted file
+      for(auto it : m_folder_to_packed.values())
+      {
+        QFile temp(it);
+        auto res = temp.remove();
+        if (!res)
+          qDebug() << "[clear_sent] error while deleting packed: " << temp.errorString();
+      }
+      m_folder_to_packed.clear();
+    });
+    emit m_transfer_listener->abort_all_running_senders();
   }
 }
 
@@ -310,6 +336,12 @@ void MainWindow::clear_received(bool) // SLOT
     m_receivedView->clear();
     m_receivedView->resetDelegate();
     m_external_transfer_requests.clear();
+    for(auto& ts : m_running_transfer_starters)
+    {
+      ts->quit(); // Do not use terminate() here, thread might have mutexes or cleanup to do
+//      ts->deleteLater();
+    }
+    m_running_transfer_starters.clear();
   }
 }
 
@@ -399,6 +431,23 @@ void MainWindow::tray_icon_activated(QSystemTrayIcon::ActivationReason reason) /
   }
 }
 
+void MainWindow::update_progress_sender(quint64 transfer_unique_id, int progress) // SLOT
+{
+  QMutexLocker lock(&m_my_transfer_requests_mutex);
+  int index = 0;
+  for(auto& el : m_my_transfer_requests)
+  {
+    if (el.m_unique_id == transfer_unique_id)
+    {
+      auto item = (DynamicTreeWidgetItem*)m_sentView->topLevelItem(index);
+      item->update_percentage(progress);
+      return;
+    }
+    ++index;
+  }
+  // Do nothing if we can't find an element to update. A cleanup might be in progress
+}
+
 void MainWindow::dragEnterEvent(QDragEnterEvent *event)
 {
   // Accept any file
@@ -439,96 +488,7 @@ void MainWindow::dropEvent(QDropEvent *event)
 
     // path_list now contains the bulk of files to process
 
-    // Prompt for a receiver with a word list based on all host names
-    PickReceiver dialog(m_peers_completion_list, this);
-    auto dialogResult = dialog.exec();
-    if (dialogResult != QDialog::DialogCode::Accepted)
-      return;
-
-    int index = dialog.getSelectedItem();
-
-    if (index == -1 || index >= m_peers.size()) {
-      QMessageBox::warning(this, "Selezione non valida", "Peer non valido.");
-      return;
-    }
-
-    if (m_peer_online[index] == false) {
-      QMessageBox::warning(this, "Peer offline", "Impossibile iniziare un trasferimento con un peer offline.\n"
-                           "Controllare la connessione, i cavi di rete e che le porte su eventuali firewall siano aperte.");
-      return;
-    }
-
-    // >> Send requests to peer <<
-
-    QTcpSocket *temporary_service_socket = new QTcpSocket(this);
-    m_my_pending_requests_to_send.clear();
-
-    for(auto& file : path_list)
-    {
-      TransferRequest req = TransferRequest::generate_unique();
-      req.m_file_path = file;
-      // Delay size calculation to later (is it a directory?)
-      req.m_sender_address = get_local_address();
-      req.m_sender_transfer_port = m_transfer_port;
-
-      // If this file is a directory, compress it and set the unpack flag after the transfer
-      if (QFileInfo(file).isDir())
-      {
-        req.m_size = -1; // Signal that this is a packed transfer
-
-        // Generate a unique temporary filename for packing
-        QString packed_filename;
-        {
-          QTemporaryFile temp;
-          if (temp.open())
-            packed_filename = temp.fileName();
-          else
-          {
-            // WARNING - disk full or not authorized
-            QMessageBox::warning(this, tr("Impossibile scrivere files temporanei"),
-                                 tr("Scrittura nell'area dei files temporanei fallita (disco pieno oppure autorizzazioni insufficienti)"));
-            return;
-          }
-          temp.close();
-        } // temp is destroyed
-
-        // Block while packing
-        m_wait_packing_window = std::make_unique<WaitPacking>(file, packed_filename, this);
-        m_wait_packing_window->exec();
-        m_wait_packing_window->close();
-        m_wait_packing_window.release();
-
-        {
-          QMutexLocker lock(&m_folder_to_packed_mutex);
-          m_folder_to_packed.insert(file, packed_filename);
-        }
-
-        QFileInfo f(packed_filename);
-        req.m_packed_size = f.size();
-      }
-      else
-      {
-        req.m_size = QFile(file).size();
-        req.m_packed_size = req.m_size;
-      }
-
-      m_my_pending_requests_to_send.append(req);
-    }
-
-    auto peer = m_peers[index];
-
-    QString ip, hostname; int service_port, transfer_port;
-    std::tie(ip, service_port, transfer_port, hostname) = peer;
-
-    temporary_service_socket->setProperty("receiver", hostname);
-
-    connect(temporary_service_socket, SIGNAL(connected()), this, SLOT(temporary_service_socket_connected()));
-    connect(temporary_service_socket, SIGNAL(error(QAbstractSocket::SocketError)),
-            this, SLOT(temporary_service_socket_error(QAbstractSocket::SocketError)));
-    connect(temporary_service_socket, &QAbstractSocket::disconnected,
-            temporary_service_socket, &QObject::deleteLater);
-
-    temporary_service_socket->connectToHost(ip, service_port);
+    pickreceiver_and_send(path_list);
   }
 }
 
@@ -680,8 +640,7 @@ void MainWindow::initialize_servers()
 
   m_transfer_listener = std::make_unique<TransferListener>(this,
                                                            // Thread-safe callbacks from transfer listeners
-                                                           std::bind(&MainWindow::my_transfer_retriever, this,
-                                                                     std::placeholders::_1, std::placeholders::_2),
+                                                           std::bind(&MainWindow::my_transfer_retriever, this, std::placeholders::_1),
                                                            std::bind(&MainWindow::packed_retriever, this, std::placeholders::_1),
                                                            std::bind(&MainWindow::packed_cleanup, this, std::placeholders::_1));
 
@@ -720,6 +679,7 @@ void MainWindow::add_new_external_transfer_requests(QVector<TransferRequest> req
     m_external_transfer_requests.append(request);
 
     DynamicTreeWidgetItem *item = new DynamicTreeWidgetItem(m_receivedView);
+    item->setProperty("transfer_request", request.m_unique_id); // Associate this list item with a transfer
 
     item->setData(0, Qt::UserRole + 0, true); // Start with accept button
     item->setData(0, Qt::UserRole + 2, 0); // Progressbar 0%
@@ -773,6 +733,7 @@ void MainWindow::packed_cleanup(QString file)
   auto res = temp.remove();
   if (!res)
     qDebug() << "[packed_cleanup] error: " << temp.errorString();
+  m_folder_to_packed.remove(it.key());
 }
 
 void MainWindow::add_new_my_transfer_requests(QString receiver, QVector<TransferRequest> reqs)
@@ -800,7 +761,7 @@ void MainWindow::add_new_my_transfer_requests(QString receiver, QVector<Transfer
   }
 }
 
-bool MainWindow::my_transfer_retriever(TransferRequest& req, DynamicTreeWidgetItem *& item_ptr)
+bool MainWindow::my_transfer_retriever(TransferRequest& req)
 {
   QMutexLocker lock(&m_my_transfer_requests_mutex);
   int index = 0;
@@ -808,13 +769,106 @@ bool MainWindow::my_transfer_retriever(TransferRequest& req, DynamicTreeWidgetIt
   {
     if (el.m_unique_id == req.m_unique_id)
     {
-      req = el;
-      item_ptr = (DynamicTreeWidgetItem*)m_sentView->topLevelItem(index);
+      req = el; // Retrieve all the data
       return true;
     }
     ++index;
   }
   return false;
+}
+
+void MainWindow::pickreceiver_and_send(QStringList files)
+{
+  // Prompt for a receiver with a word list based on all host names
+  PickReceiver dialog(m_peers_completion_list, this);
+  auto dialogResult = dialog.exec();
+  if (dialogResult != QDialog::DialogCode::Accepted)
+    return;
+
+  int index = dialog.getSelectedItem();
+
+  if (index == -1 || index >= m_peers.size()) {
+    QMessageBox::warning(this, "Selezione non valida", "Peer non valido.");
+    return;
+  }
+
+  if (m_peer_online[index] == false) {
+    QMessageBox::warning(this, "Peer offline", "Impossibile iniziare un trasferimento con un peer offline.\n"
+                         "Controllare la connessione, i cavi di rete e che le porte su eventuali firewall siano aperte.");
+    return;
+  }
+
+  // >> Send requests to peer <<
+
+  QTcpSocket *temporary_service_socket = new QTcpSocket(this);
+  m_my_pending_requests_to_send.clear();
+
+  for(auto& file : files)
+  {
+    TransferRequest req = TransferRequest::generate_unique();
+    req.m_file_path = file;
+    // Delay size calculation to later (is it a directory?)
+    req.m_sender_address = get_local_address();
+    req.m_sender_transfer_port = m_transfer_port;
+
+    // If this file is a directory, compress it and set the unpack flag after the transfer
+    if (QFileInfo(file).isDir())
+    {
+      req.m_size = -1; // Signal that this is a packed transfer
+
+      // Generate a unique temporary filename for packing
+      QString packed_filename;
+      {
+        QTemporaryFile temp;
+        if (temp.open())
+          packed_filename = temp.fileName();
+        else
+        {
+          // WARNING - disk full or not authorized
+          QMessageBox::warning(this, tr("Impossibile scrivere files temporanei"),
+                               tr("Scrittura nell'area dei files temporanei fallita (disco pieno oppure autorizzazioni insufficienti)"));
+          return;
+        }
+        temp.close();
+      } // temp is destroyed
+
+      // Block while packing
+      m_wait_packing_window = std::make_unique<WaitPacking>(file, packed_filename, this);
+      m_wait_packing_window->exec();
+      m_wait_packing_window->close();
+      m_wait_packing_window.release();
+
+      {
+        QMutexLocker lock(&m_folder_to_packed_mutex);
+        m_folder_to_packed.insert(file, packed_filename);
+      }
+
+      QFileInfo f(packed_filename);
+      req.m_packed_size = f.size();
+    }
+    else
+    {
+      req.m_size = QFile(file).size();
+      req.m_packed_size = req.m_size;
+    }
+
+    m_my_pending_requests_to_send.append(req);
+  }
+
+  auto peer = m_peers[index];
+
+  QString ip, hostname; int service_port, transfer_port;
+  std::tie(ip, service_port, transfer_port, hostname) = peer;
+
+  temporary_service_socket->setProperty("receiver", hostname);
+
+  connect(temporary_service_socket, SIGNAL(connected()), this, SLOT(temporary_service_socket_connected()));
+  connect(temporary_service_socket, SIGNAL(error(QAbstractSocket::SocketError)),
+          this, SLOT(temporary_service_socket_error(QAbstractSocket::SocketError)));
+  connect(temporary_service_socket, &QAbstractSocket::disconnected,
+          temporary_service_socket, &QObject::deleteLater);
+
+  temporary_service_socket->connectToHost(ip, service_port);
 }
 
 QString MainWindow::form_local_destination_file(TransferRequest& req) const
@@ -1009,8 +1063,16 @@ void MainWindow::listview_transfer_accepted(QModelIndex index) // SLOT
   QString local_destination_file = form_local_destination_file(req);
   if (req.m_size == -1)
     local_destination_file += ".zip";
-  TransferStarter *ts = new TransferStarter(req, local_destination_file);
-  connect(ts, SIGNAL(finished()), ts, SLOT(deleteLater()));
+  //TransferStarter *ts = new TransferStarter(req, local_destination_file);
+  m_running_transfer_starters.append(new TransferStarter(req, local_destination_file));
+  // Warning: only delete AFTER is has been removed from the starters
+  //connect(ts, SIGNAL(), ts, SLOT(deleteLater()));
+  TransferStarter *ts = m_running_transfer_starters.back();
+  connect(m_running_transfer_starters.back(), &QThread::finished, this, [&, ts]() {
+    auto index = m_running_transfer_starters.indexOf(ts);
+    if (index != -1)
+      m_running_transfer_starters.remove(index);
+  });
   connect(ts, SIGNAL(file_received(TransferRequest)), this, SLOT(file_received(TransferRequest)));
 
   DynamicTreeWidgetItem *item = (DynamicTreeWidgetItem*)m_receivedView->topLevelItem(index.row());
@@ -1033,6 +1095,42 @@ void MainWindow::file_received(TransferRequest req) // SLOT
 
   stream.flush();
   m_tray_icon->showMessage("eKAshare", info_text, QSystemTrayIcon::Information, 2000);
+}
+
+void MainWindow::sent_view_custom_context_menu(QPoint point) // SLOT
+{
+  m_sentViewMenu->exec(m_sentView->mapToGlobal(point));
+}
+
+void MainWindow::sent_view_send_file(bool) // SLOT
+{
+  QFileDialog dialog(this);
+  dialog.setFileMode((QFileDialog::FileMode)(QFileDialog::AnyFile | QFileDialog::ExistingFiles));
+  QStringList files;
+  if (dialog.exec())
+  {
+    files = dialog.selectedFiles();
+    if (files.empty())
+      return;
+    pickreceiver_and_send(files);
+  }
+}
+
+void MainWindow::sent_view_send_folder(bool) // SLOT
+{
+  QFileDialog dialog(this);
+  // FIXME: for whatever reason we can only select one folder with the native dialog box. Either reimplement
+  // a dialog yourself (http://www.qtcentre.org/threads/34226-QFileDialog-select-multiple-directories?p=158482#post158482)
+  // or just pick one folder
+  dialog.setFileMode(QFileDialog::DirectoryOnly);
+  QStringList folders;
+  if (dialog.exec())
+  {
+    folders = dialog.selectedFiles();
+    if (folders.empty())
+      return;
+    pickreceiver_and_send(folders);
+  }
 }
 
 void MainWindow::ping_peers() // SLOT
