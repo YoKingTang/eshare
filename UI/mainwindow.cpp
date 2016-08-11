@@ -521,7 +521,7 @@ void MainWindow::read_peers_from_file()
     QMessageBox msgBox;
     msgBox.setIcon(QMessageBox::Warning);
     msgBox.setText("File di configurazione 'peers.cfg' mancante nella directory\n\n '" + QDir::currentPath() + "'\n\n"
-                   "L'applicazione sara' in grado di ricevere files ma non di inviarne.");
+                   "L'applicazione non sara' in grado di ricevere o inviare files (impossibile autenticare un peer).");
     msgBox.exec();
     return;
   }
