@@ -64,7 +64,7 @@ artifacts:
     name: eshare-archive
 
 # Tags aren't updated by appveyor, use a powershell script to do a "latest build overwrite" deployment
-on_success:
+before_deploy:
   - git config --global user.name "Marco A."
   - git config --global user.email "marcodiiga@users.noreply.github.com"
   - git config --global credential.helper store
