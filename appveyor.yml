@@ -6,6 +6,8 @@ environment:
   matrix:
   - VCINSTALLDIR: C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\
     QTDIR: C:\Qt\5.7\msvc2015_64
+  gh_token:
+    secure: mQh8gJ+nWvz2ZEQ3kZEAEM1pXw+U4mnvp8rhqam/VyNB+ckzVX4GK1PZfnm58rpm
 
 configuration:
 - Release
@@ -60,6 +62,17 @@ after_build:
 artifacts:
   - path: eshare.zip
     name: eshare-archive
+
+# Tags aren't updated by appveyor, use a powershell script to do a "latest build overwrite" deployment
+on_success:
+  - git config --global user.name "Marco A."
+  - git config --global user.email "marcodiiga@users.noreply.github.com"
+  - git config --global credential.helper store
+  - ps: Add-Content "$env:USERPROFILE\.git-credentials" "https://$($env:gh_token):x-oauth-basic@github.com`n"
+  - git remote set-url origin https://github.com/marcodiiga/eshare.git
+  - git tag -d eshare         # Delete existing tag - this may fail, failure should be ignored
+  - git tag eshare HEAD       # Create new tag mytag matching latest commit
+  - git push -f origin eshare # Push mytag to GitHub, overwriting existing tag
 
 deploy:
   release: eshare
