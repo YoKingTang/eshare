@@ -43,19 +43,19 @@ build_script:
 
 after_build:
   - cd %APPVEYOR_BUILD_FOLDER%
-  - mkdir deploy
-  - copy release\eshare.exe deploy
-  - copy ThirdParty\zlib\build\Release\zlib.dll deploy
-  - copy ThirdParty\quazip\build\Release\quazip.dll deploy
-  - copy "%VCINSTALLDIR%\redist\x64\Microsoft.VC140.CRT\msvcp140.dll" deploy
-  - copy "%VCINSTALLDIR%\redist\x64\Microsoft.VC140.CRT\vcruntime140.dll" deploy
-  - copy "%QTDIR%\bin\Qt5Core.dll" deploy
-  - copy "%QTDIR%\bin\Qt5Gui.dll" deploy
-  - copy "%QTDIR%\bin\Qt5Network.dll" deploy
-  - copy "%QTDIR%\bin\Qt5Widgets.dll" deploy
-  - mkdir deploy\platforms
-  - copy "%QTDIR%\plugins\platforms\qwindows.dll" deploy\platforms
-  - 7z a -tzip -mx9 eshare.zip deploy
+  - mkdir eshare
+  - copy release\eshare.exe eshare
+  - copy ThirdParty\zlib\build\Release\zlib.dll eshare
+  - copy ThirdParty\quazip\build\Release\quazip.dll eshare
+  - copy "%VCINSTALLDIR%\redist\x64\Microsoft.VC140.CRT\msvcp140.dll" eshare
+  - copy "%VCINSTALLDIR%\redist\x64\Microsoft.VC140.CRT\vcruntime140.dll" eshare
+  - copy "%QTDIR%\bin\Qt5Core.dll" eshare
+  - copy "%QTDIR%\bin\Qt5Gui.dll" eshare
+  - copy "%QTDIR%\bin\Qt5Network.dll" eshare
+  - copy "%QTDIR%\bin\Qt5Widgets.dll" eshare
+  - mkdir eshare\platforms
+  - copy "%QTDIR%\plugins\platforms\qwindows.dll" eshare\platforms
+  - 7z a -tzip -mx9 eshare.zip eshare
 
 artifacts:
   - path: eshare.zip
