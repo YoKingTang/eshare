@@ -86,4 +86,3 @@ deploy:
   force_update: true # Overwrite existing releases
   on:
     branch: master # Release from master branch only
-    appveyor_repo_tag: false # Do not deploy only on tag push
