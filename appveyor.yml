@@ -1,0 +1,76 @@
+# Reference http://www.appveyor.com/docs/appveyor-yml
+version: '{build}'
+os: Visual Studio 2015
+
+environment:
+  matrix:
+  - VCINSTALLDIR: C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\
+    QTDIR: C:\Qt\5.7\msvc2015_64
+
+configuration:
+- Release
+
+matrix:
+  fast_finish: true
+
+install:
+  - cd %REPO_DIR%
+  - git submodule update --init --recursive
+
+before_build:
+  - set PATH=%PATH%;%QTDIR%\bin
+  - CALL "%VCINSTALLDIR%\vcvarsall.bat" amd64
+# zlib
+  - cd %APPVEYOR_BUILD_FOLDER%\ThirdParty\zlib
+  - mkdir build
+  - cd build
+  - cmake -G "Visual Studio 14 2015 Win64" ../
+  - msbuild /nologo /t:Build /p:Configuration=Debug zlib.sln
+  - msbuild /nologo /t:Build /p:Configuration=Release zlib.sln
+# quazip
+  - cd %APPVEYOR_BUILD_FOLDER%\ThirdParty\quazip
+  - mkdir build
+  - cd build
+  - cmake -G "Visual Studio 14 2015 Win64" -DZLIB_INCLUDE_DIR="%APPVEYOR_BUILD_FOLDER%\ThirdParty\zlib;%APPVEYOR_BUILD_FOLDER%\ThirdParty\zlib\build" -DZLIB_LIBRARY="%APPVEYOR_BUILD_FOLDER%\ThirdParty\zlib\build\Debug\zlibd.lib" ../
+  - msbuild /nologo /t:Build /p:Configuration=Debug quazip.sln
+  - cmake -G "Visual Studio 14 2015 Win64" -DZLIB_INCLUDE_DIR="%APPVEYOR_BUILD_FOLDER%\ThirdParty\zlib;%APPVEYOR_BUILD_FOLDER%\ThirdParty\zlib\build" -DZLIB_LIBRARY="%APPVEYOR_BUILD_FOLDER%\ThirdParty\zlib\build\Release\zlib.lib" ../
+  - msbuild /nologo /t:Build /p:Configuration=Release quazip.sln
+
+build_script:
+  - cd %APPVEYOR_BUILD_FOLDER%
+  - qmake eshare.pro -config release -spec win32-msvc2015
+  - nmake BUILD=release
+
+after_build:
+  - cd %APPVEYOR_BUILD_FOLDER%
+  - mkdir deploy
+  - copy release\eshare.exe deploy
+  - copy ThirdParty\zlib\build\Release\zlib.dll deploy
+  - copy ThirdParty\quazip\build\Release\quazip.dll deploy
+  - copy "%VCINSTALLDIR%\redist\x64\Microsoft.VC140.CRT\msvcp140.dll" deploy
+  - copy "%VCINSTALLDIR%\redist\x64\Microsoft.VC140.CRT\vcruntime140.dll" deploy
+  - copy "%QTDIR%\bin\Qt5Core.dll" deploy
+  - copy "%QTDIR%\bin\Qt5Gui.dll" deploy
+  - copy "%QTDIR%\bin\Qt5Network.dll" deploy
+  - copy "%QTDIR%\bin\Qt5Widgets.dll" deploy
+  - mkdir deploy\platforms
+  - copy "%QTDIR%\plugins\platforms\qwindows.dll" deploy\platforms
+  - 7z a -tzip -mx9 eshare.zip deploy
+
+artifacts:
+  - path: eshare.zip
+    name: eshare-archive
+
+deploy:
+  release: eshare
+  description: '[Win64 Release] eshare packed archive (portable)'
+  provider: GitHub
+  auth_token:
+    secure: mQh8gJ+nWvz2ZEQ3kZEAEM1pXw+U4mnvp8rhqam/VyNB+ckzVX4GK1PZfnm58rpm
+  artifact: eshare-archive
+  draft: false
+  prerelease: false
+  force_update: true # Overwrite existing releases
+  on:
+    branch: master # Release from master branch only
+    appveyor_repo_tag: false # Do not deploy only on tag push
