@@ -44,6 +44,7 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->setupUi(this);
 
     this->setWindowTitle("Pannello di controllo");
+    this->setWindowFlags(Qt::WindowStaysOnTopHint);
     this->setWindowIcon(QIcon(":/Res/ekashare_icon.png"));
     this->setAcceptDrops(true);
 
@@ -468,6 +469,7 @@ void MainWindow::dropEvent(QDropEvent *event)
 {
   // Accept any drop if they exist
   const QMimeData* mime_data = event->mimeData();
+  event->accept();
 
   // Check the mime type, allowed types: a file or a list of files
   if (mime_data->hasUrls())
@@ -780,7 +782,7 @@ bool MainWindow::my_transfer_retriever(TransferRequest& req)
 void MainWindow::pickreceiver_and_send(QStringList files)
 {
   // Prompt for a receiver with a word list based on all host names
-  PickReceiver dialog(m_peers_completion_list, this);
+  PickReceiver dialog(m_peers_completion_list, this);  
   auto dialogResult = dialog.exec();
   if (dialogResult != QDialog::DialogCode::Accepted)
     return;
@@ -834,9 +836,12 @@ void MainWindow::pickreceiver_and_send(QStringList files)
 
       // Block while packing
       m_wait_packing_window = std::make_unique<WaitPacking>(file, packed_filename, this);
-      m_wait_packing_window->exec();
+      auto dialogResult = m_wait_packing_window->exec();
       m_wait_packing_window->close();
       m_wait_packing_window.release();
+
+      if (dialogResult != QDialog::DialogCode::Accepted)
+        return;
 
       {
         QMutexLocker lock(&m_folder_to_packed_mutex);

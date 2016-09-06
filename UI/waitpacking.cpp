@@ -1,6 +1,9 @@
 #include <UI/WaitPacking.h>
 #include "ui_WaitPacking.h"
 #include <JlCompress.h>
+#include <QMessageBox>
+#include <QDebug>
+#include <QFile>
 #include <future>
 
 WaitPacking::WaitPacking(QString dir, QString packed_dir, MainWindow *parent) :
@@ -25,18 +28,60 @@ int WaitPacking::exec()
 {
   this->show();
 
-  auto future = std::async(std::launch::async, [](QString dir, QString packed_dir) {
+  m_future = m_promise.get_future();
+  m_thread = std::make_unique<std::thread>([this](QString dir, QString packed_dir) {
 
      JlCompress::compressDir(packed_dir, dir, true /* Recursive */);
+     this->m_promise.set_value();
 
   }, m_dir, m_packed_dir);
 
-  std::future_status status;
+  m_thread->detach();
+
+  QCoreApplication::processEvents();
+
+  auto status = std::future_status::deferred;
   do
   {
-    status = future.wait_for(std::chrono::milliseconds(0));
+    if (m_future.valid())
+      status = m_future.wait_for(std::chrono::milliseconds(0));
     QCoreApplication::processEvents();
-  } while(status != std::future_status::ready);
+  } while(status != std::future_status::ready && !m_cancelled);
 
-  return QDialog::Accepted;
+  if (!m_cancelled)
+    return QDialog::Accepted;
+  else
+    return QDialog::Rejected;
+}
+
+#ifdef _WIN32
+#include "Windows.h"
+#endif
+
+void WaitPacking::on_cancelButton_clicked()
+{
+    auto reply = QMessageBox::question(this, "Conferma di annullamento", "Non è raccomandato annullare "
+                                       "una operazione di packing. Si è proprio sicuri di voler proseguire?",
+                                       QMessageBox::Yes | QMessageBox::No);
+    if (reply == QMessageBox::No)
+      return;
+
+    m_cancelled = true;
+
+    if (m_future.valid() &&
+        m_future.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready)
+    {        
+#ifdef _WIN32
+
+        TerminateThread(m_thread->native_handle(), 0);
+#else
+        throw std::runtime_error("NOT IMPLEMENTED");
+#endif        
+    }
+
+    qDebug() << "Packing operation TERMINATED" << m_packed_dir;
+    using namespace std::chrono_literals;
+    std::this_thread::sleep_for(4s);
+    if (QFile::exists(m_packed_dir))
+      QFile(m_packed_dir).remove();
 }

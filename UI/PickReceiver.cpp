@@ -107,6 +107,7 @@ PickReceiver::PickReceiver(QStringList completionWords, MainWindow *parent) :
   QDialog((QWidget*)parent),
   ui(new Ui::PickReceiver)
 {
+  this->setWindowFlags(Qt::WindowStaysOnTopHint | Qt::Dialog);
   auto flags = this->windowFlags();
   flags = flags & ~Qt::WindowContextHelpButtonHint;
   this->setWindowFlags(flags);
