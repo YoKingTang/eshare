@@ -44,6 +44,8 @@ build_script:
   - nmake BUILD=release
 
 after_build:
+  - cd %REPO_DIR%
+  - git rev-parse --verify HEAD > trigger
   - cd %APPVEYOR_BUILD_FOLDER%
   - mkdir eshare
   - copy release\eshare.exe eshare
@@ -57,6 +59,7 @@ after_build:
   - copy "%QTDIR%\bin\Qt5Widgets.dll" eshare
   - mkdir eshare\platforms
   - copy "%QTDIR%\plugins\platforms\qwindows.dll" eshare\platforms
+  - copy "%REPO_DIR%\trigger" eshare
   - 7z a -tzip -mx9 eshare.zip eshare
 
 artifacts:
