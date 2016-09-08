@@ -1,3 +1,4 @@
+#include <RunGuard/RunGuard.h>
 #include <UI/MainWindow.h>
 #include <QApplication>
 #include <QCommandLineParser>
@@ -33,7 +34,11 @@ void myMessageOutput(QtMsgType type, const QMessageLogContext &context, const QS
 }
 
 int main(int argc, char *argv[])
-{    
+{
+    RunGuard guard( "eshare_FS42_rand" );
+    if ( !guard.tryToRun() )
+      return 0; // Guard protection against multiple instances
+
     QApplication a(argc, argv);
     QGuiApplication::setApplicationDisplayName("eKAshare");
     QCoreApplication::setApplicationName("eshare");

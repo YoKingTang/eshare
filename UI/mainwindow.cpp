@@ -223,6 +223,9 @@ MainWindow::MainWindow(QWidget *parent) :
 
 MainWindow::~MainWindow()
 {
+#ifdef _WIN32
+    UnregisterHotKey((HWND)this->winId(), 1);
+#endif
   if (m_transfer_listener->isRunning())
     m_transfer_listener->terminate();
   if (m_peers_ping_timer)

@@ -19,7 +19,8 @@ SOURCES +=  main.cpp \
     Receiver/TransferStarter.cpp \
     Chunker/Chunker.cpp \
     UI/PickReceiver.cpp \
-    UI/WaitPacking.cpp
+    UI/WaitPacking.cpp \
+    RunGuard/RunGuard.cpp
 
 HEADERS  += \
     Data/TransferRequest.h \
@@ -31,7 +32,8 @@ HEADERS  += \
     Receiver/TransferStarter.h \
     Chunker/Chunker.h \
     UI/PickReceiver.h \
-    UI/WaitPacking.h
+    UI/WaitPacking.h \
+    RunGuard/RunGuard.h
 
 FORMS    += \
             UI/PickReceiver.ui \
@@ -44,6 +46,7 @@ win32:LIBS += -luser32
 DISTFILES +=
 
 RESOURCES += Resources.qrc
+RC_FILE = Res/eshare.rc
 
 # zlib and quazip
 INCLUDEPATH += $$PWD/ThirdParty/zlib \
