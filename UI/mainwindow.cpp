@@ -342,8 +342,8 @@ void MainWindow::clear_received(bool) // SLOT
     m_external_transfer_requests.clear();
     for(auto& ts : m_running_transfer_starters)
     {
+      connect(ts, &QThread::finished, ts, &QObject::deleteLater);
       ts->quit(); // Do not use terminate() here, thread might have mutexes or cleanup to do
-//      ts->deleteLater();
     }
     m_running_transfer_starters.clear();
   }
@@ -856,8 +856,23 @@ void MainWindow::pickreceiver_and_send(QStringList files)
     }
     else
     {
-      req.m_size = QFile(file).size();
-      req.m_packed_size = req.m_size;
+      QFileInfo f(file);
+      if (!f.isSymLink())
+        req.m_size = f.size(); // Not a symlink
+      else {
+        // WAR for #QTBUG-45218
+#ifdef _WIN32
+        HANDLE hFile = CreateFileA (file.toStdString().c_str(), GENERIC_READ, 0, NULL, OPEN_EXISTING,
+                                   FILE_ATTRIBUTE_NORMAL, NULL);
+        if (hFile == INVALID_HANDLE_VALUE) {
+          qDebug() << "[ERROR] Could not get lnk size!";
+          req.m_size = f.size(); // This will be WRONG until the bug is fixed
+        }
+        DWORD dwFileSize = GetFileSize (hFile, NULL);
+        req.m_size = dwFileSize;
+        CloseHandle (hFile);
+#endif
+      }
     }
 
     m_my_pending_requests_to_send.append(req);
@@ -1071,10 +1086,10 @@ void MainWindow::listview_transfer_accepted(QModelIndex index) // SLOT
   QString local_destination_file = form_local_destination_file(req);
   if (req.m_size == -1)
     local_destination_file += ".zip";
-  //TransferStarter *ts = new TransferStarter(req, local_destination_file);
+
+  // Notice the naked memory allocation. It will be cleared in clear_received
   m_running_transfer_starters.append(new TransferStarter(req, local_destination_file));
-  // Warning: only delete AFTER is has been removed from the starters
-  //connect(ts, SIGNAL(), ts, SLOT(deleteLater()));
+
   TransferStarter *ts = m_running_transfer_starters.back();
   connect(m_running_transfer_starters.back(), &QThread::finished, this, [&, ts]() {
     auto index = m_running_transfer_starters.indexOf(ts);
@@ -1143,7 +1158,7 @@ void MainWindow::sent_view_send_folder(bool) // SLOT
 
 void MainWindow::ping_peers() // SLOT
 {
-  qDebug() << "[ping_peers] Starting an all-peers ping";
+  // qDebug() << "[ping_peers] Starting an all-peers ping";
   int index = 0;
   for(auto& tuple : m_peers)
   {
@@ -1183,7 +1198,7 @@ void MainWindow::ping_failed(QAbstractSocket::SocketError err) // SLOT
   QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
   auto peer_id = socket->property("peer_id").toInt();
 
-  qDebug() << "Ping failed for peer " << peer_id << " with " << err;
+  // qDebug() << "Ping failed for peer " << peer_id << " with " << err;
 
   m_peer_online[peer_id] = false;
 

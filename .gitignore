@@ -39,3 +39,5 @@ CMakeLists.txt.user*
 # Build dirs
 build
 
+# Trigger
+trigger
